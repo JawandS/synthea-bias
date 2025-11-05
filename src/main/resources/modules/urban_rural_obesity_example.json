@@ -1,0 +1,321 @@
+{
+  "name": "Urban/Rural Obesity Example",
+  "remarks": [
+    "This example module demonstrates how to:",
+    "1. Assign an urban/rural flag to each person",
+    "2. Make obesity probability conditional on that flag",
+    "Urban residents have higher obesity risk (35%) vs rural (25%)"
+  ],
+  "states": {
+    "Initial": {
+      "type": "Initial",
+      "direct_transition": "Assign_Urban_Rural_Status"
+    },
+
+    "Assign_Urban_Rural_Status": {
+      "type": "Simple",
+      "remarks": [
+        "Assign urban/rural status based on probability.",
+        "This example uses 70% urban, 30% rural distribution.",
+        "You could also use geographic data or ZIP codes for more accurate assignment."
+      ],
+      "distributed_transition": [
+        {
+          "distribution": 0.70,
+          "transition": "Set_Urban_Flag"
+        },
+        {
+          "distribution": 0.30,
+          "transition": "Set_Rural_Flag"
+        }
+      ]
+    },
+
+    "Set_Urban_Flag": {
+      "type": "SetAttribute",
+      "attribute": "urban_rural_status",
+      "value": "urban",
+      "direct_transition": "Set_Urban_Numeric"
+    },
+
+    "Set_Urban_Numeric": {
+      "type": "SetAttribute",
+      "attribute": "is_urban",
+      "value": 1,
+      "remarks": "Also set a numeric flag for easier condition checking",
+      "direct_transition": "Wait_Until_Adult"
+    },
+
+    "Set_Rural_Flag": {
+      "type": "SetAttribute",
+      "attribute": "urban_rural_status",
+      "value": "rural",
+      "direct_transition": "Set_Rural_Numeric"
+    },
+
+    "Set_Rural_Numeric": {
+      "type": "SetAttribute",
+      "attribute": "is_urban",
+      "value": 0,
+      "remarks": "Rural = 0, Urban = 1",
+      "direct_transition": "Wait_Until_Adult"
+    },
+
+    "Wait_Until_Adult": {
+      "type": "Guard",
+      "allow": {
+        "condition_type": "Age",
+        "operator": ">=",
+        "quantity": 18,
+        "unit": "years"
+      },
+      "direct_transition": "Check_Urban_Rural_For_Obesity"
+    },
+
+    "Check_Urban_Rural_For_Obesity": {
+      "type": "Simple",
+      "remarks": [
+        "Different obesity probabilities based on urban/rural status",
+        "Urban: 35% chance of obesity pathway",
+        "Rural: 25% chance of obesity pathway"
+      ],
+      "complex_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban_rural_status",
+            "operator": "==",
+            "value": "urban"
+          },
+          "distributions": [
+            {
+              "distribution": 0.35,
+              "transition": "Urban_Obesity_Risk_Factors"
+            },
+            {
+              "distribution": 0.65,
+              "transition": "No_Obesity_Yet"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban_rural_status",
+            "operator": "==",
+            "value": "rural"
+          },
+          "distributions": [
+            {
+              "distribution": 0.25,
+              "transition": "Rural_Obesity_Risk_Factors"
+            },
+            {
+              "distribution": 0.75,
+              "transition": "No_Obesity_Yet"
+            }
+          ]
+        }
+      ]
+    },
+
+    "Urban_Obesity_Risk_Factors": {
+      "type": "SetAttribute",
+      "attribute": "obesity_risk_factors",
+      "value": "high",
+      "remarks": [
+        "Urban factors: sedentary lifestyle, fast food access,",
+        "less physical activity, higher stress"
+      ],
+      "direct_transition": "Set_Obesity_Trajectory"
+    },
+
+    "Rural_Obesity_Risk_Factors": {
+      "type": "SetAttribute",
+      "attribute": "obesity_risk_factors",
+      "value": "moderate",
+      "remarks": [
+        "Rural factors: limited healthy food access,",
+        "but more physical activity opportunities"
+      ],
+      "direct_transition": "Set_Obesity_Trajectory"
+    },
+
+    "Set_Obesity_Trajectory": {
+      "type": "SetAttribute",
+      "attribute": "obesity_trajectory",
+      "value": true,
+      "remarks": "Mark that this person is on path to obesity",
+      "direct_transition": "Obesity_Development_Delay"
+    },
+
+    "Obesity_Development_Delay": {
+      "type": "Delay",
+      "range": {
+        "low": 1,
+        "high": 5,
+        "unit": "years"
+      },
+      "remarks": "Obesity develops over time, not immediately",
+      "direct_transition": "BMI_Check_For_Obesity"
+    },
+
+    "BMI_Check_For_Obesity": {
+      "type": "Simple",
+      "remarks": [
+        "Check if BMI has reached obesity threshold.",
+        "This integrates with the existing wellness module's BMI tracking"
+      ],
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Vital Sign",
+            "vital_sign": "BMI",
+            "operator": ">=",
+            "value": 30
+          },
+          "transition": "Onset_Obesity"
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Vital Sign",
+                "vital_sign": "BMI",
+                "operator": ">=",
+                "value": 25
+              },
+              {
+                "condition_type": "Vital Sign",
+                "vital_sign": "BMI",
+                "operator": "<",
+                "value": 30
+              }
+            ]
+          },
+          "transition": "Overweight_But_Not_Obese"
+        },
+        {
+          "transition": "Continue_Monitoring"
+        }
+      ]
+    },
+
+    "Onset_Obesity": {
+      "type": "ConditionOnset",
+      "assign_to_attribute": "obesity",
+      "codes": [
+        {
+          "system": "SNOMED-CT",
+          "code": "414915002",
+          "display": "Obesity (disorder)"
+        }
+      ],
+      "remarks": "Patient has developed obesity",
+      "direct_transition": "Urban_Rural_Obesity_Management"
+    },
+
+    "Urban_Rural_Obesity_Management": {
+      "type": "Simple",
+      "remarks": [
+        "Different management strategies based on location.",
+        "Urban areas might have better access to specialists,",
+        "Rural areas might have limited resources."
+      ],
+      "complex_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban_rural_status",
+            "operator": "==",
+            "value": "urban"
+          },
+          "distributions": [
+            {
+              "distribution": 0.6,
+              "transition": "Referred_To_Weight_Management"
+            },
+            {
+              "distribution": 0.4,
+              "transition": "Standard_Counseling"
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban_rural_status",
+            "operator": "==",
+            "value": "rural"
+          },
+          "distributions": [
+            {
+              "distribution": 0.3,
+              "transition": "Referred_To_Weight_Management"
+            },
+            {
+              "distribution": 0.7,
+              "transition": "Standard_Counseling"
+            }
+          ]
+        }
+      ]
+    },
+
+    "Referred_To_Weight_Management": {
+      "type": "SetAttribute",
+      "attribute": "weight_management_referral",
+      "value": true,
+      "direct_transition": "Continue_Monitoring"
+    },
+
+    "Standard_Counseling": {
+      "type": "SetAttribute",
+      "attribute": "received_obesity_counseling",
+      "value": true,
+      "direct_transition": "Continue_Monitoring"
+    },
+
+    "Overweight_But_Not_Obese": {
+      "type": "SetAttribute",
+      "attribute": "overweight",
+      "value": true,
+      "direct_transition": "Continue_Monitoring"
+    },
+
+    "No_Obesity_Yet": {
+      "type": "SetAttribute",
+      "attribute": "obesity_risk_factors",
+      "value": "low",
+      "direct_transition": "Continue_Monitoring"
+    },
+
+    "Continue_Monitoring": {
+      "type": "Delay",
+      "exact": {
+        "quantity": 1,
+        "unit": "years"
+      },
+      "remarks": "Check again in a year",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "obesity",
+            "operator": "is not nil"
+          },
+          "transition": "Terminal"
+        },
+        {
+          "transition": "BMI_Check_For_Obesity"
+        }
+      ]
+    },
+
+    "Terminal": {
+      "type": "Terminal"
+    }
+  },
+  "gmf_version": 2
+}
