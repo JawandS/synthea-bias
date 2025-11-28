@@ -35,7 +35,9 @@
             "condition_type": "PriorState",
             "name": "Begin_Homelessness"
           },
-          "remarks": "people who have ever been homeless have the highest risk of becoming homeless again",
+          "remarks": [
+            "people who have ever been homeless have the highest risk of becoming homeless again"
+          ],
           "distributions": [
             {
               "distribution": 0.99,

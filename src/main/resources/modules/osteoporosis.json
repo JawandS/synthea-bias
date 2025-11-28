@@ -41,17 +41,23 @@
         {
           "distribution": 0.1,
           "transition": "Onset_Age_70",
-          "remarks": "== 1/5 minus the 1/10 from the previous entry"
+          "remarks": [
+            "== 1/5 minus the 1/10 from the previous entry"
+          ]
         },
         {
           "distribution": 0.2,
           "transition": "Onset_Age_80",
-          "remarks": "== 2/5 minus the 1/5 from the previous entry"
+          "remarks": [
+            "== 2/5 minus the 1/5 from the previous entry"
+          ]
         },
         {
           "distribution": 0.2667,
           "transition": "Onset_Age_90",
-          "remarks": "== 2/3 minus the 2/5 from the previous entry"
+          "remarks": [
+            "== 2/3 minus the 2/5 from the previous entry"
+          ]
         },
         {
           "distribution": 0.3333,
@@ -215,7 +221,9 @@
         },
         {
           "transition": "End_Diagnosis_Encounter",
-          "remarks": "bisphosphates are the best medicine for osteoporosis, but not available until ~1995"
+          "remarks": [
+            "bisphosphates are the best medicine for osteoporosis, but not available until ~1995"
+          ]
         }
       ]
     },
