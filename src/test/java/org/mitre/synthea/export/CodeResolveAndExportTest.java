@@ -119,6 +119,8 @@ public class CodeResolveAndExportTest {
     PayerManager.clear();
     PayerManager.loadNoInsurance();
 
+    Exporter.loadCodeMappers();
+
     File stu3OutputDirectory = Exporter.getOutputFolder("fhir_stu3", person);
     stu3OutputPath = stu3OutputDirectory.toPath().resolve(Exporter.filename(person, "", "json"));
     File r4OutputDirectory = Exporter.getOutputFolder("fhir", person);
