@@ -1,12 +1,20 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Codex (OpenAI coding agents) when working in this repository.
 
 ## Project Overview
 
 Synthea is a Synthetic Patient Population Simulator that generates realistic (but not real) patient data and associated health records. It simulates patients from birth to death with realistic medical histories, encounters, conditions, medications, and more.
 
 **Requirements**: Java JDK 11 or newer (LTS versions 11 or 17 recommended)
+
+## Agent Notes (Codex)
+
+- Keep responses concise and reference file paths (avoid pasting large files).
+- Use the `./gradlew` commands below for build/test; prefer repo scripts (`run_synthea`, `run_flexporter`) over ad-hoc java runs.
+- Avoid editing generated artifacts under `output/`; source modules live in `src/main/resources/modules/`.
+- For module flow clarity, run `./gradlew graphviz` to render state machine diagrams when needed.
+- Determinism matters: use person-specific RNG (`person.rand()`) instead of `Math.random()` when touching code.
 
 ## Build and Test Commands
 
