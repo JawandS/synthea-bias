@@ -1,259 +1,380 @@
-# Evaluating Representativeness in Healthcare Claims Data
+# Methodology Summary: Evaluating Representativeness in Healthcare Claims Data
 
-## Methodology Documentation
-
----
-
-## 1. Overview and Objectives
-
-This methodology provides a structured, implementation-ready framework for evaluating **representativeness and bias in healthcare claims data** used in actuarial and AI/ML applications. It is designed to support compliance with actuarial standards, improve model reliability, and reduce the risk of unfair or misleading outcomes arising from non-representative data.
-
-The methodology emphasizes **representative results rather than representative sampling**, acknowledging that administrative claims data are generated through utilization processes rather than population-based sampling designs.
-
-**Primary objectives:**
-
-* Define and operationalize representativeness in claims data
-* Quantify representation gaps across key dimensions
-* Mitigate bias during model development
-* Monitor bias during deployment
-* Support transparent documentation and governance
+> **Purpose of this Document**
+>
+> This markdown document provides a comprehensive, implementation-oriented summary of the *Methodology Documentation* for **Evaluating Representativeness in Healthcare Claims Data**. It is intended to serve as a **practical guide for synthetic data generation, model development, validation, and documentation**, not merely as an academic summary.
+>
+> The goal is to enable reproducible implementation of representativeness assessment, bias mitigation, and AI governance in actuarial applications using healthcare claims data.
 
 ---
 
-## 2. Conceptual Framework
+## 1. Conceptual Foundation
 
-### 2.1 Defining Representativeness in Claims Data
+### 1.1 Core Problem
 
-Representativeness is defined as the extent to which analytical results and model outputs are expected to generalize to a **clearly specified target population**.
+Healthcare claims data are **administrative utilization records**, not population health data. Individuals appear in claims data only if they:
 
-Key distinctions:
+1. Have insurance coverage
+2. Successfully access healthcare services
+3. Receive services that are documented and coded
+4. Generate reimbursable claims
 
-* **Observed claims population:** Individuals with coverage who generated claims
-* **Target population:** Population to which actuarial inference or AI deployment is intended
+Each step introduces **systematic selection effects** that disproportionately exclude or distort representation of:
 
-Claims data reflect successful navigation of multiple access points (coverage, provider access, coding, adjudication), creating systematic representation gaps.
+* Rural populations
+* Racial and ethnic minorities
+* Uninsured or underinsured individuals
+* Pediatric populations (commercial data)
+* Oldest-old populations (Medicare data)
+* Patients with underdiagnosed or undercoded conditions
 
-### 2.2 Representative Sampling vs. Representative Results
+AI/ML models trained on claims data therefore risk **structural bias**, not random noise.
 
-* **Representative sampling:** Dataset mirrors population composition (rarely feasible)
-* **Representative results:** Model relationships remain stable across subgroups
+---
 
-This methodology focuses on achieving and validating representative results through statistical assessment and adjustment.
+### 1.2 Representativeness Redefined
+
+The methodology explicitly rejects naive notions of representativeness based on sample mirroring.
+
+**Key distinction:**
+
+* *Representative sampling* → Rarely achievable with claims data
+* *Representative results* → Central objective
+
+A dataset is considered *representative* if **model conclusions are expected to generalize to a clearly defined target population**, even when sample composition differs.
+
+Three operational definitions:
+
+1. **Representative composition** – Sample proportions match target population
+2. **Representative estimates** – Aggregate statistics generalize
+3. **Representative heterogeneous effects** – Model performance is stable across subgroups
+
+The methodology primarily targets (2) and (3).
+
+---
+
+## 2. Target Population Specification (Mandatory Step)
+
+Every representativeness assessment begins with **explicit target population definition**.
+
+Required components:
+
+* Eligibility criteria (age, coverage, enrollment duration)
+* Insurance product type (Commercial, Medicare, Medicaid)
+* Geographic scope (state, county, RUCA category)
+* Time period
+* Intended actuarial application (pricing, risk adjustment, UM, fraud)
+
+> **Implementation rule:** No representativeness analysis is valid without an explicit target population statement.
 
 ---
 
 ## 3. Three-Stage Bias Assessment Framework
 
-The framework evaluates bias across the AI/ML lifecycle:
-
-1. **Input Bias** – data representativeness
-2. **Model Bias** – development and estimation choices
-3. **Application Bias** – deployment and use
+The methodology structures bias evaluation across the full AI/ML lifecycle.
 
 ---
 
-## 4. Stage 1: Input Bias Assessment
+### Stage 1: Input Bias Assessment (Data Representativeness)
 
-### 4.1 Purpose
+**Objective:** Quantify how and where claims data differ from the target population.
 
-Assess whether claims data are appropriate and sufficient for the intended actuarial application by identifying representation gaps.
+#### 3.1 Dimensions of Assessment
 
-### 4.2 Dimensions Evaluated
+* Demographics: age, sex
+* Geography: urban/rural (RUCA), region
+* Clinical: chronic condition prevalence, comorbidity burden
+* Utilization: visits, admissions, pharmacy claims
+* Costs: spending distribution and concentration
 
-* Demographics (age, sex)
-* Geography (e.g., RUCA classifications)
-* Clinical conditions and coding
-* Utilization patterns
-* Insurance type and plan characteristics
+#### 3.2 Quantitative Metrics
 
-### 4.3 Quantitative Metrics
+| Metric                             | Purpose               | Interpretation Thresholds                   |
+| ---------------------------------- | --------------------- | ------------------------------------------- |
+| Standardized Mean Difference (SMD) | Scale-free imbalance  | |SMD| > 0.10 indicates meaningful imbalance |
+| KL Divergence                      | Information loss      | < 0.10 typically acceptable                 |
+| Chi-square + Effect Size           | Categorical imbalance | Use Cramér’s V, not p-values alone          |
+| Variance Ratios                    | Distribution spread   | Deviations from 1 indicate heterogeneity    |
+| 5/50 Cost Metric                   | Cost concentration    | Validates realism and representation        |
 
-**Distributional metrics:**
+#### 3.3 Statistical Significance vs Materiality
 
-* Standardized Mean Differences (SMD)
-
-  * |SMD| > 0.10 indicates meaningful imbalance
-* Variance ratios
-* Kullback–Leibler (KL) divergence
-
-**Statistical tests (used cautiously):**
-
-* Chi-square tests (categorical variables)
-* Confidence intervals for group differences
-
-Statistical significance must be interpreted alongside **clinical and actuarial relevance**.
-
-### 4.4 Interpretation Guidelines
-
-* Emphasize magnitude over p-values in large samples
-* Identify gaps that are material to financial or operational decisions
-* Document known sources of systematic underrepresentation
+* Large datasets make p-values misleading
+* Emphasis is placed on **magnitude and actuarial relevance**, not hypothesis rejection
+* Statistical tests are diagnostic, not dispositive
 
 ---
 
-## 5. Stage 2: Model Bias Mitigation
+### Stage 2: Model Bias Mitigation (Development Phase)
 
-### 5.1 Purpose
+**Objective:** Reduce sensitivity of model outputs to representation gaps while preserving interpretability and stability.
 
-Reduce bias arising from input imbalance and modeling decisions during development.
+#### 3.4 Covariate Balancing Methods
 
-### 5.2 Propensity Score Approaches
+1. **Propensity Score Methods**
 
-* Matching
-* Stratification
-* Covariate adjustment
-* Inverse Probability Weighting (IPW)
+   * Matching
+   * Stratification
+   * Regression adjustment
+   * Inverse Probability Weighting (IPW)
 
-**Key considerations:**
+2. **Entropy Balancing (Preferred)**
 
-* Diagnostics for common support
-* Weight stability and trimming
-* Selection of estimand (ATE vs. ATT)
+   * Directly enforces covariate balance
+   * Avoids extreme weights
+   * Efficient when treated group is large
 
-### 5.3 Entropy Balancing
+3. **Calibration & Post-Stratification**
 
-Entropy balancing enforces covariate balance through optimization rather than estimated treatment probabilities.
+   * Aligns marginal distributions to external benchmarks
+   * Supports census- or survey-based adjustments
 
-Advantages:
+4. **Raking / Iterative Proportional Fitting**
 
-* Direct balance constraints
-* Improved efficiency in some settings
-* Reduced reliance on model specification
+   * Balances across multiple dimensions simultaneously
 
-### 5.4 Calibration and Post-Stratification
+> **Key principle:** No single method is sufficient; methods are iterative and context-dependent.
 
-* Post-stratification using external benchmarks
-* Raking (iterative proportional fitting)
-* Calibration weighting with linear constraints
+---
 
-Useful when reliable population margins are available.
+#### 3.5 Missing Data Handling
 
-### 5.5 Missing Data Treatment
+Key findings from literature:
 
-* Missingness is often **not MCAR**
-* Listwise deletion risks excluding underrepresented groups
-* Methods:
+* Missingness is rarely MCAR
+* Dropping incomplete cases disproportionately excludes marginalized populations
+* Imputation accuracy ≠ fairness
 
-  * Single imputation (mean, regression, kNN)
-  * Multiple imputation
-  * Pattern-mixture models (MNAR sensitivity)
+Recommended practices:
 
-Higher imputation accuracy does **not guarantee fairness**.
+* Diagnose missingness mechanism (MCAR / MAR / MNAR)
+* Use multiple imputation where feasible
+* Include subgroup indicators in imputation models
+* Conduct sensitivity analyses using pattern-mixture models
+* Explicitly document residual uncertainty
 
-### 5.6 Sensitivity Analysis
+---
 
-Recommended analyses include:
+#### 3.6 Sensitivity Analysis
 
+Required robustness checks:
+
+* Alternative model forms (GLM vs tree-based)
 * Alternative covariate definitions
-* Alternative model forms (e.g., GLM vs. tree-based)
-* Alternative weighting methods
-* Outcome definition robustness
+* Alternative balancing specifications
+* Alternative missing data assumptions
+* Threshold sensitivity for classification models
+
+Sensitivity analysis is treated as **model risk disclosure**, not optimization.
 
 ---
 
-## 6. Stage 3: Application Bias Monitoring
+### Stage 3: Application Bias Monitoring (Deployment Phase)
 
-### 6.1 Purpose
+**Objective:** Detect bias that emerges during real-world use.
 
-Ensure deployed models perform consistently and fairly across subgroups.
+#### 3.7 Performance Monitoring
 
-### 6.2 Performance Monitoring
+Metrics reported **overall and by subgroup**:
 
-**Continuous outcomes:**
+* Regression: RMSE, MAE, R²
+* Classification: AUC, sensitivity, specificity
+* Calibration: observed vs predicted risk curves
 
-* RMSE, MAE by subgroup
+#### 3.8 Fairness Metrics (Context-Dependent)
 
-**Binary outcomes:**
+| Metric                | Focus                     |
+| --------------------- | ------------------------- |
+| Equal Opportunity     | True positive rate parity |
+| Equalized Odds        | TPR + FPR parity          |
+| Predictive Parity     | Precision parity          |
+| False Negative Parity | Missed cases              |
+| Demographic Parity    | Output independence       |
 
-* Brier score
-* Classification error
+Metric choice depends on **harm asymmetry** of errors.
 
-**Discrimination and calibration:**
+#### 3.9 Operational Bias Risks
 
-* ROC/AUC by subgroup
-* Calibration plots
+* Automation bias (over-trust)
+* Dismissal bias (alert fatigue)
+* Feedback loops (biased decisions → biased data)
 
-### 6.3 Fairness Metrics
-
-Select metrics based on error types most likely to cause harm:
-
-* Equal opportunity (TPR parity)
-* Equalized odds (TPR + FPR parity)
-* Predictive parity
-* False negative rate parity
-* Demographic parity (context-dependent)
-
----
-
-## 7. Actuarial Standards Alignment
-
-The methodology aligns with:
-
-* **ASOP 23 (Data Quality):** appropriateness, sufficiency, disclosure
-* **ASOP 12 (Risk Classification):** avoidance of unfair discrimination
-* **ASOP 41 (Actuarial Communications):** transparency and documentation
-* **ASOP 56 (Modeling):** validation, sensitivity, limitation disclosure
+Monitoring is continuous, not one-time.
 
 ---
 
-## 8. Synthetic Data Application
+## 4. Synthetic Data Generation Framework
 
-### 8.1 Purpose
+### 4.1 Design Principles
 
-Demonstrate the framework using controlled, reproducible scenarios.
+Synthetic data are used to:
 
-### 8.2 Scenarios
-
-1. **Urban vs. Rural Underrepresentation**
-2. **Clinical Documentation Bias**
-3. **Age Distribution Bias**
+* Isolate bias mechanisms
+* Test representativeness diagnostics
+* Validate mitigation strategies
 
 Each scenario includes:
 
-* Reference population
+* Reference population dataset
 * Biased claims dataset
-* Validation of representation gaps
-
-### 8.3 Validation Criteria
-
-* Distributional tests (chi-square, KL divergence)
-* Standardized mean differences
-* Cost concentration metrics (5/50 analysis)
+* Sample size ≥ 10,000
+* Realistic utilization and cost distributions
 
 ---
 
-## 9. Model Documentation Using Model Cards
+### 4.2 Scenario 1: Urban / Rural Bias
 
-### 9.1 Purpose
+**Mechanism:** Differential access to care
 
-Model cards function as **"nutrition labels"** for actuarial AI models.
+Key features:
 
-### 9.2 Core Elements
+* RUCA-based geographic classification
+* Rural underrepresentation
+* Lower utilization rates
+* Higher ED reliance
+* Undercoded chronic conditions
 
-* Model details and provenance
-* Intended and out-of-scope use
-* Training and evaluation data
-* Subgroup performance metrics
-* Ethical considerations and limitations
+Assessment metrics:
 
-### 9.3 Actuarial Extensions
+* Geographic distribution tests
+* Utilization SMDs
+* Cost concentration metrics
+
+---
+
+### 4.3 Scenario 2: Clinical Documentation Bias
+
+**Mechanism:** Provider coding practices
+
+Key features:
+
+* Undercoding of diabetes complications, mental health
+* Specialty-based coding intensity
+* Pharmacy–diagnosis discordance
+
+Assessment metrics:
+
+* Diagnosis prevalence tests
+* Prescription–diagnosis concordance
+* Provider-level KL divergence
+
+---
+
+### 4.4 Scenario 3: Age Distribution Bias
+
+**Mechanism:** Coverage and survivorship effects
+
+Key features:
+
+* Pediatric underrepresentation (commercial)
+* Oldest-old underrepresentation (Medicare)
+* Healthier-than-average observed cohorts
+
+Assessment metrics:
+
+* Age-band chi-square tests
+* KS tests for age distributions
+* Age-specific utilization SMDs
+
+---
+
+### 4.5 Validation Criteria
+
+Synthetic data must satisfy:
+
+* Realistic spending concentration (5/50 rule)
+* Adequate subgroup sample sizes
+* Plausible utilization–condition relationships
+* Scenario-specific imbalance thresholds
+
+---
+
+## 5. Model Documentation via Model Cards
+
+### 5.1 Purpose
+
+Model cards operationalize:
+
+* ASOP 41 (communication)
+* ASOP 23 (data quality)
+* ASOP 56 (modeling)
+
+They function as **actuarial governance artifacts**, not marketing summaries.
+
+---
+
+### 5.2 Core Sections
+
+1. Model Details
+2. Intended Use / Out-of-Scope Use
+3. Factors and Metrics
+4. Training Data
+5. Evaluation Data
+6. Ethical Considerations and Limitations
+7. Caveats and Recommendations
+
+---
+
+### 5.3 Actuarial Extensions
+
+Additional required documentation:
 
 * ASOP mapping
-* Claims-specific data limitations
+* Claims data lineage
+* Coding intensity variation
+* Claims lag and maturity
+* Plan design effects
+* Network configuration
 * Financial materiality context
-* Regulatory environment
 
 ---
 
-## 10. Implementation Guidance
+## 6. Mitigation and Disclosure Strategy
 
-* Integrate documentation into validation workflows
-* Maintain model cards through version control
-* Update documentation following material changes
-* Use scenario-based disclosures to guide deployment decisions
+Key principle:
+
+> Not all bias can be removed. All material bias must be documented.
+
+Mitigation options:
+
+* Data supplementation (census, surveys)
+* Statistical adjustment
+* Recalibration
+* Use restrictions
+* Enhanced monitoring
+
+Residual risks are disclosed, not hidden.
 
 ---
 
-## 11. Summary
+## 7. Implementation Guidance
 
-This methodology provides actuaries with a rigorous, standards-aligned approach to assessing and governing representativeness in healthcare claims data used for AI/ML applications. It treats representativeness as a **measurable source of model risk** and embeds fairness considerations within existing actuarial practice rather than as a separate ethical overlay.
+### 7.1 Workflow Integration
+
+1. Define target population
+2. Perform Stage 1 diagnostics
+3. Apply Stage 2 adjustments
+4. Validate with synthetic scenarios
+5. Document via model card
+6. Deploy with Stage 3 monitoring
+
+### 7.2 Maintenance
+
+* Annual documentation refresh
+* Triggered updates for material changes
+* Continuous subgroup monitoring
+
+---
+
+## 8. Bottom Line
+
+This methodology establishes **representativeness as a core component of actuarial model risk management**.
+
+It provides:
+
+* Quantitative diagnostics
+* Mitigation tools
+* Documentation standards
+* Governance processes
+
+The objective is not perfect fairness, but **defensible, transparent, and professionally compliant AI use in healthcare actuarial practice**.
