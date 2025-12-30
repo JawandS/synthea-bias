@@ -13,6 +13,7 @@ lib/custom/*.jar
 
 /failed_exports/
 /output/
+/output*/
 /out/
 
 **/*.log
