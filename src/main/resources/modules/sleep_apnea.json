@@ -278,7 +278,29 @@
         }
       },
       "unit": "days",
-      "direct_transition": "Overnight Test"
+      "complex_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban",
+            "operator": "==",
+            "value": false
+          },
+          "distributions": [
+            {
+              "transition": "Terminal",
+              "distribution": 0.0
+            },
+            {
+              "transition": "Overnight Test",
+              "distribution": 1.0
+            }
+          ]
+        },
+        {
+          "transition": "Overnight Test"
+        }
+      ]
     },
     "Return Home Sleep Device": {
       "type": "DeviceEnd",
@@ -561,7 +583,29 @@
         }
       },
       "unit": "days",
-      "direct_transition": "Follow Up"
+      "complex_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "urban",
+            "operator": "==",
+            "value": false
+          },
+          "distributions": [
+            {
+              "transition": "Terminal",
+              "distribution": 0.0
+            },
+            {
+              "transition": "Follow Up",
+              "distribution": 1.0
+            }
+          ]
+        },
+        {
+          "transition": "Follow Up"
+        }
+      ]
     },
     "CPAP Titration": {
       "type": "Procedure",
