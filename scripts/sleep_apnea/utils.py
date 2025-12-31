@@ -59,6 +59,30 @@ def parse_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
+def find_dataset_end_date(csv_dir: Path) -> Optional[date]:
+    """Return the latest date found across all CSVs in a dataset directory."""
+    latest: Optional[date] = None
+    for path in sorted(csv_dir.glob("*.csv")):
+        if not path.is_file():
+            continue
+        with path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            fieldnames = reader.fieldnames or []
+            date_fields = [
+                name
+                for name in fieldnames
+                if any(token in name.lower() for token in ("date", "start", "stop"))
+            ]
+            if not date_fields:
+                continue
+            for row in reader:
+                for field in date_fields:
+                    parsed = parse_date(row.get(field))
+                    if parsed and (latest is None or parsed > latest):
+                        latest = parsed
+    return latest
+
+
 def parse_float(value: Optional[str]) -> Optional[float]:
     """Parse a numeric string into a float, returning None for blanks."""
     if value is None:

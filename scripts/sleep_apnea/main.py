@@ -27,9 +27,10 @@ from sleep_apnea_report import ReportInputs, write_report
 
 from utils import (
     find_csv_dir,
+    find_dataset_end_date,
     get_value,
     impute_missing,
-    load_condition_flags,
+    load_condition_patients,
     load_latest_bmi,
     load_patient_urban_flags,
     load_sleep_spend,
@@ -117,7 +118,7 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
     """Build the regression dataset from Synthea CSV exports.
     
     Features extracted (base model):
-    - age_years: Patient age at reference date
+    - age_years: Patient age at dataset end date
     - male: Gender indicator (1.0 for male, 0.0 otherwise)
     - income: Annual income
     - bmi: Most recent BMI observation
@@ -130,10 +131,11 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
     conditions_path = csv_dir / "conditions.csv"
     observations_path = csv_dir / "observations.csv"
 
-    hypertension_patients, ref_date = load_condition_flags(conditions_path, HYPERTENSION_CODES)
+    hypertension_patients = load_condition_patients(conditions_path, HYPERTENSION_CODES)
+    ref_date = find_dataset_end_date(csv_dir)
     if ref_date is None:
         ref_date = date.today()
-    # Anchor age calculations to a dataset-relevant reference date.
+    # Anchor age calculations to the dataset end date.
 
     # Use the most recent BMI per patient for a consistent point-in-time feature.
     bmi_by_patient = load_latest_bmi(observations_path, BMI_CODE)
@@ -401,24 +403,23 @@ def permutation_test(
     metrics_b = evaluate_predictions(y_true_b, y_pred_b)
     observed_diff = metrics_a[metric] - metrics_b[metric]
     
-    # Pool residuals for permutation
-    residuals_a = [p - t for p, t in zip(y_pred_a, y_true_a)]
-    residuals_b = [p - t for p, t in zip(y_pred_b, y_true_b)]
-    pooled = residuals_a + residuals_b
-    n_a = len(residuals_a)
+    # Pool (y_true, y_pred) pairs and permute group labels.
+    pooled = list(zip(y_true_a, y_pred_a)) + list(zip(y_true_b, y_pred_b))
+    n_a = len(y_true_a)
     
     count_extreme = 0
     for _ in range(n_permutations):
         rng.shuffle(pooled)
         perm_a = pooled[:n_a]
         perm_b = pooled[n_a:]
-        
-        # Reconstruct predictions from residuals
-        perm_pred_a = [t + r for t, r in zip(y_true_a, perm_a[:len(y_true_a)])]
-        perm_pred_b = [t + r for t, r in zip(y_true_b, perm_b[:len(y_true_b)])]
-        
-        perm_metrics_a = evaluate_predictions(y_true_a, perm_pred_a)
-        perm_metrics_b = evaluate_predictions(y_true_b, perm_pred_b)
+
+        perm_true_a = [t for t, _ in perm_a]
+        perm_pred_a = [p for _, p in perm_a]
+        perm_true_b = [t for t, _ in perm_b]
+        perm_pred_b = [p for _, p in perm_b]
+
+        perm_metrics_a = evaluate_predictions(perm_true_a, perm_pred_a)
+        perm_metrics_b = evaluate_predictions(perm_true_b, perm_pred_b)
         perm_diff = perm_metrics_a[metric] - perm_metrics_b[metric]
         
         if abs(perm_diff) >= abs(observed_diff):

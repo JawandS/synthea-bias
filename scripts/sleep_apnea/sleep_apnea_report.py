@@ -393,4 +393,4 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
     handle.write("- **Consistent splits**: Same random seed used for both datasets to ensure\n")
     handle.write("  comparable train/val/test partitions.\n")
     handle.write("- **Bootstrap CIs**: Non-parametric confidence intervals via resampling.\n")
-    handle.write("- **Permutation tests**: Distribution-free hypothesis testing by shuffling residuals.\n")
+    handle.write("- **Permutation tests**: Distribution-free hypothesis testing by shuffling sample assignments.\n")
