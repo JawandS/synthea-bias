@@ -109,6 +109,37 @@ def load_sdoh_urban_map() -> Dict[Tuple[str, str], int]:
     return urban_map
 
 
+def load_patient_urban_flags(patients_path: Path) -> Dict[str, Optional[float]]:
+    """Load urban/rural flag for each patient based on their location.
+    
+    Returns a dict mapping patient_id to urban flag:
+    - 1.0 for urban
+    - 0.0 for rural
+    - None if location cannot be determined
+    """
+    urban_map = load_sdoh_urban_map()
+    patient_urban: Dict[str, Optional[float]] = {}
+    
+    if not patients_path.exists():
+        return patient_urban
+    
+    with patients_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        header_map = make_header_map(reader.fieldnames)
+        for row in reader:
+            patient_id = get_value(row, header_map, ["id"])
+            if not patient_id:
+                continue
+            state = (get_value(row, header_map, ["state"]) or "").strip().upper()
+            county = (get_value(row, header_map, ["county"]) or "").strip().upper()
+            key = (state, county)
+            if state and county and key in urban_map:
+                patient_urban[patient_id] = float(urban_map[key])
+            else:
+                patient_urban[patient_id] = None
+    return patient_urban
+
+
 def load_condition_flags(
     conditions_path: Path,
     codes: Collection[str],
