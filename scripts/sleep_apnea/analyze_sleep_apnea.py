@@ -1,133 +1,155 @@
 #!/usr/bin/env python3
-import argparse
-import csv
-from pathlib import Path
+"""Analysis helpers for sleep apnea modeling outputs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Collection, Dict, Iterable, List, Sequence, Tuple, TYPE_CHECKING
+
+from utils import compute_population_stats, load_sdoh_urban_map
+
+if TYPE_CHECKING:
+    from scripts.sleep_apnea.main import Dataset, Split
 
 
-SLEEP_APNEA_CODES = {"73430006", "78275009"}
+@dataclass
+class AnalysisResults:
+    """Computed metrics and summaries used in report generation."""
+
+    baseline_summary: Dict[str, float]
+    biased_summary: Dict[str, float]
+    baseline_test_metrics: Dict[str, float]
+    biased_test_metrics: Dict[str, float]
+    biased_on_baseline_metrics: Dict[str, float]
+    baseline_on_biased_metrics: Dict[str, float]
+    baseline_bias: Dict[str, float]
+    biased_bias: Dict[str, float]
+    importance_table: List[Tuple[str, float, float]]
+    baseline_population: Dict[str, float]
+    biased_population: Dict[str, float]
+    baseline_split_sizes: Tuple[int, int, int]
+    biased_split_sizes: Tuple[int, int, int]
 
 
-def _find_csv_dir(path_str: str) -> Path:
-    path = Path(path_str)
-    if path.is_dir():
-        if (path / "patients.csv").exists():
-            return path
-        if (path / "csv" / "patients.csv").exists():
-            return path / "csv"
-    raise FileNotFoundError(
-        f"Unable to locate patients.csv under {path_str}. "
-        "Pass the output directory (e.g., output_baseline) or the csv subdir."
-    )
+def evaluate_predictions(y_true: List[float], y_pred: Iterable[float]) -> Dict[str, float]:
+    """Compute MAE, RMSE, and R2 for a set of predictions."""
+    y_pred_list = list(y_pred)
+    n = len(y_true)
+    if n == 0:
+        return {"mae": float("nan"), "rmse": float("nan"), "r2": float("nan")}
+    abs_err = [abs(p - t) for p, t in zip(y_pred_list, y_true)]
+    sq_err = [(p - t) ** 2 for p, t in zip(y_pred_list, y_true)]
+    mae = sum(abs_err) / n
+    rmse = (sum(sq_err) / n) ** 0.5
+    mean_true = sum(y_true) / n
+    ss_tot = sum((t - mean_true) ** 2 for t in y_true)
+    ss_res = sum(sq_err)
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+    return {"mae": mae, "rmse": rmse, "r2": r2}
 
 
-def _get_field_value(row, candidates):
-    for candidate in candidates:
-        for key in row.keys():
-            if key.lower() == candidate.lower():
-                return row[key]
-    return None
-
-
-def load_patient_ids(patients_path: Path) -> set:
-    patient_ids = set()
-    with patients_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            patient_id = _get_field_value(row, ["Id", "ID", "Patient", "PATIENT"])
-            if patient_id:
-                patient_ids.add(patient_id)
-    if not patient_ids:
-        raise ValueError(f"No patient IDs found in {patients_path}")
-    return patient_ids
-
-
-def load_sleep_apnea_patients(conditions_path: Path, codes: set) -> set:
-    patient_ids = set()
-    with conditions_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            code = _get_field_value(row, ["CODE", "Code"])
-            if code not in codes:
-                continue
-            patient_id = _get_field_value(row, ["PATIENT", "Patient", "Id", "ID"])
-            if patient_id:
-                patient_ids.add(patient_id)
-    return patient_ids
-
-
-def dataset_stats(label: str, base_dir: str, codes: set) -> dict:
-    csv_dir = _find_csv_dir(base_dir)
-    patients_path = csv_dir / "patients.csv"
-    conditions_path = csv_dir / "conditions.csv"
-
-    patient_ids = load_patient_ids(patients_path)
-    apnea_patients = load_sleep_apnea_patients(conditions_path, codes)
-    apnea_patients = apnea_patients & patient_ids
-
-    total = len(patient_ids)
-    apnea_total = len(apnea_patients)
-    prevalence = apnea_total / total if total else 0.0
-
+def summarize_dataset(dataset: Dataset) -> Dict[str, float]:
+    """Summarize dataset size, spend totals, and nonzero rate."""
+    n = len(dataset.y)
+    total_spend = sum(dataset.y)
+    mean_spend = total_spend / n if n else 0.0
+    nonzero = sum(1 for value in dataset.y if value > 0)
     return {
-        "label": label,
-        "csv_dir": csv_dir,
-        "total_patients": total,
-        "sleep_apnea_patients": apnea_total,
-        "prevalence": prevalence,
+        "n": n,
+        "total_spend": total_spend,
+        "mean_spend": mean_spend,
+        "nonzero_rate": nonzero / n if n else 0.0,
     }
 
 
-def _format_pct(value: float) -> str:
-    return f"{value * 100:.2f}%"
+def build_importance_table(
+    baseline_model: Any,
+    biased_model: Any,
+    feature_names: Sequence[str],
+) -> List[Tuple[str, float, float]]:
+    """Build an ordered list of feature importances for both models."""
+    baseline_importances = dict(zip(feature_names, baseline_model.feature_importances_))
+    biased_importances = dict(zip(feature_names, biased_model.feature_importances_))
+    ordered = sorted(feature_names, key=lambda name: baseline_importances.get(name, 0.0), reverse=True)
+    return [
+        (name, baseline_importances.get(name, 0.0), biased_importances.get(name, 0.0))
+        for name in ordered
+    ]
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Compare sleep apnea prevalence between two Synthea CSV datasets."
+def analyze_models(
+    baseline: Dataset,
+    biased: Dataset,
+    split_baseline: Split,
+    split_biased: Split,
+    baseline_model: Any,
+    biased_model: Any,
+    sleep_disorder_code: str,
+    sleep_apnea_codes: Collection[str],
+) -> AnalysisResults:
+    """Compute evaluation metrics, feature importances, and population stats."""
+    baseline_summary = summarize_dataset(baseline)
+    biased_summary = summarize_dataset(biased)
+
+    baseline_test_preds = baseline_model.predict(split_baseline.X_test)
+    biased_test_preds = biased_model.predict(split_biased.X_test)
+
+    baseline_test_metrics = evaluate_predictions(split_baseline.y_test, baseline_test_preds)
+    biased_test_metrics = evaluate_predictions(split_biased.y_test, biased_test_preds)
+
+    # Cross-dataset generalization checks.
+    biased_on_baseline_preds = biased_model.predict(split_baseline.X_test)
+    baseline_on_biased_preds = baseline_model.predict(split_biased.X_test)
+
+    biased_on_baseline_metrics = evaluate_predictions(split_baseline.y_test, biased_on_baseline_preds)
+    baseline_on_biased_metrics = evaluate_predictions(split_biased.y_test, baseline_on_biased_preds)
+
+    def _bias_summary(y_true: List[float], y_pred: Iterable[float]) -> Dict[str, float]:
+        """Summarize mean prediction bias vs. the true mean."""
+        y_pred_list = list(y_pred)
+        if len(y_true) == 0 or len(y_pred_list) == 0:
+            return {"mean_true": 0.0, "mean_pred": 0.0, "diff": 0.0, "rel": float("nan")}
+        mean_true = sum(y_true) / len(y_true)
+        mean_pred = sum(float(value) for value in y_pred_list) / len(y_pred_list)
+        diff = mean_pred - mean_true
+        rel = diff / mean_true if mean_true != 0 else float("nan")
+        return {"mean_true": mean_true, "mean_pred": mean_pred, "diff": diff, "rel": rel}
+
+    baseline_bias = _bias_summary(split_baseline.y_test, baseline_test_preds)
+    biased_bias = _bias_summary(split_baseline.y_test, biased_on_baseline_preds)
+
+    urban_map = load_sdoh_urban_map()
+    baseline_population = compute_population_stats(
+        baseline.csv_dir, urban_map, sleep_disorder_code, sleep_apnea_codes
     )
-    parser.add_argument(
-        "--baseline",
-        default="output_baseline",
-        help="Baseline output directory (or csv subdir). Default: output_baseline",
+    biased_population = compute_population_stats(
+        biased.csv_dir, urban_map, sleep_disorder_code, sleep_apnea_codes
     )
-    parser.add_argument(
-        "--biased",
-        default="output_rural_bias",
-        help="Biased output directory (or csv subdir). Default: output_rural_bias",
+
+    importance_table = build_importance_table(
+        baseline_model, biased_model, baseline.feature_names
     )
-    parser.add_argument(
-        "--codes",
-        default="73430006,78275009",
-        help="Comma-separated SNOMED codes for sleep apnea conditions.",
+
+    return AnalysisResults(
+        baseline_summary=baseline_summary,
+        biased_summary=biased_summary,
+        baseline_test_metrics=baseline_test_metrics,
+        biased_test_metrics=biased_test_metrics,
+        biased_on_baseline_metrics=biased_on_baseline_metrics,
+        baseline_on_biased_metrics=baseline_on_biased_metrics,
+        baseline_bias=baseline_bias,
+        biased_bias=biased_bias,
+        importance_table=importance_table,
+        baseline_population=baseline_population,
+        biased_population=biased_population,
+        baseline_split_sizes=(
+            len(split_baseline.y_train),
+            len(split_baseline.y_val),
+            len(split_baseline.y_test),
+        ),
+        biased_split_sizes=(
+            len(split_biased.y_train),
+            len(split_biased.y_val),
+            len(split_biased.y_test),
+        ),
     )
-    args = parser.parse_args()
-
-    codes = {code.strip() for code in args.codes.split(",") if code.strip()}
-
-    baseline = dataset_stats("baseline", args.baseline, codes)
-    biased = dataset_stats("biased", args.biased, codes)
-
-    print("Sleep apnea prevalence (unique patients with condition):")
-    for stats in (baseline, biased):
-        print(
-            f"- {stats['label']}: {stats['sleep_apnea_patients']}/{stats['total_patients']} "
-            f"({_format_pct(stats['prevalence'])}) in {stats['csv_dir']}"
-        )
-
-    abs_diff = biased["prevalence"] - baseline["prevalence"]
-    rel_diff = None
-    if baseline["prevalence"] > 0:
-        rel_diff = abs_diff / baseline["prevalence"]
-
-    print("\nDifference (biased - baseline):")
-    print(f"- absolute: {_format_pct(abs_diff)}")
-    if rel_diff is None:
-        print("- relative: n/a (baseline prevalence is 0)")
-    else:
-        print(f"- relative: {rel_diff * 100:.2f}%")
-
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
