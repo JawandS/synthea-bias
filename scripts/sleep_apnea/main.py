@@ -31,7 +31,6 @@ from utils import (
     get_value,
     impute_missing,
     load_condition_patients,
-    load_latest_bmi,
     load_patient_urban_flags,
     load_sleep_spend,
     make_header_map,
@@ -65,7 +64,6 @@ SLEEP_SUPPLY_CODES = {"463659001", "467645007", "704718009", "706226000", "97200
 SLEEP_EQUIPMENT_CODES = SLEEP_DEVICE_CODES | SLEEP_SUPPLY_CODES
 
 HYPERTENSION_CODES = {"59621000"}
-BMI_CODE = "39156-5"
 BASELINE_GENERATION_CMD = (
     "./run_synthea -p 25000 --exporter.csv.export=true --exporter.baseDirectory=./output_baseline"
 )
@@ -121,7 +119,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
     - age_years: Patient age at dataset end date
     - male: Gender indicator (1.0 for male, 0.0 otherwise)
     - income: Annual income
-    - bmi: Most recent BMI observation
     - hypertension: Hypertension diagnosis indicator
     
     The urban flag is stored separately and can be added for the urban model variant.
@@ -129,7 +126,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
     csv_dir = find_csv_dir(base_dir)
     patients_path = csv_dir / "patients.csv"
     conditions_path = csv_dir / "conditions.csv"
-    observations_path = csv_dir / "observations.csv"
 
     hypertension_patients = load_condition_patients(conditions_path, HYPERTENSION_CODES)
     ref_date = find_dataset_end_date(csv_dir)
@@ -137,8 +133,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
         ref_date = date.today()
     # Anchor age calculations to the dataset end date.
 
-    # Use the most recent BMI per patient for a consistent point-in-time feature.
-    bmi_by_patient = load_latest_bmi(observations_path, BMI_CODE)
     sleep_spend = load_sleep_spend(
         csv_dir,
         SLEEP_PROCEDURE_CODES,
@@ -154,7 +148,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
         "age_years",
         "male",
         "income",
-        "bmi",
         "hypertension",
     ]
 
@@ -182,7 +175,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
             male = 1.0 if gender == "m" else 0.0
 
             income = parse_float(get_value(row, header_map, ["income"]))
-            bmi = bmi_by_patient.get(patient_id)
 
             hypertension = 1.0 if patient_id in hypertension_patients else 0.0
 
@@ -190,7 +182,6 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
                 age_years,
                 male,
                 income,
-                bmi,
                 hypertension,
             ]
 

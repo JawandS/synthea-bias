@@ -18,6 +18,9 @@ lib/custom/*.jar
 
 **/*.log
 
+# Python
+__pycache__/
+
 # don't commit the autobuilt version file
 src/main/resources/version.txt
 
