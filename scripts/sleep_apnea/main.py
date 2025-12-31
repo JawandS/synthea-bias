@@ -20,7 +20,24 @@ from dataclasses import dataclass, field
 from datetime import date
 from itertools import product
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, TypedDict
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, TypedDict
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+from rich.table import Table
+from rich.text import Text
+
+console = Console()
 
 from analyze_sleep_apnea import analyze_models, evaluate_predictions
 from sleep_apnea_report import ReportInputs, write_report
@@ -255,6 +272,7 @@ def train_with_validation(
     param_grid: Sequence[GBDTParams],
     seed: int,
     feature_names: List[str],
+    progress_callback: Optional[Callable[[], None]] = None,
 ) -> Tuple[GradientBoostingRegressor, GBDTParams, Dict[str, float], List[str]]:
     """Select hyperparameters by validation MAE and refit on train+val.
     
@@ -274,6 +292,8 @@ def train_with_validation(
             best_model = model
             best_params = params
             best_metrics = metrics
+        if progress_callback:
+            progress_callback()
 
     if best_model is None or best_params is None or best_metrics is None:
         raise RuntimeError("Failed to train model on validation grid.")
@@ -327,6 +347,7 @@ def bootstrap_metrics(
     n_bootstrap: int,
     seed: int,
     confidence: float = 0.95,
+    progress_callback: Optional[Callable[[], None]] = None,
 ) -> Dict[str, Dict[str, float]]:
     """Compute bootstrap confidence intervals for evaluation metrics.
     
@@ -350,6 +371,8 @@ def bootstrap_metrics(
         metrics = evaluate_predictions(y_true_boot, y_pred_boot)
         for key in bootstrap_results:
             bootstrap_results[key].append(metrics[key])
+        if progress_callback:
+            progress_callback()
     
     alpha = 1 - confidence
     result = {}
@@ -376,6 +399,7 @@ def permutation_test(
     n_permutations: int,
     seed: int,
     metric: str = "mae",
+    progress_callback: Optional[Callable[[], None]] = None,
 ) -> Dict[str, float]:
     """Two-sample permutation test for metric difference between populations.
     
@@ -415,6 +439,8 @@ def permutation_test(
         
         if abs(perm_diff) >= abs(observed_diff):
             count_extreme += 1
+        if progress_callback:
+            progress_callback()
     
     p_value = (count_extreme + 1) / (n_permutations + 1)
     
@@ -506,105 +532,173 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print("Loading datasets...")
-    baseline = build_dataset("baseline", args.baseline)
-    biased = build_dataset("biased", args.biased)
+    # Print header
+    console.print()
+    console.print(Panel.fit(
+        "[bold cyan]Sleep Apnea Spend Model Training[/bold cyan]\n"
+        "[dim]Comparing baseline vs biased datasets with urban/rural analysis[/dim]",
+        border_style="cyan"
+    ))
+    console.print()
 
-    print("Splitting datasets...")
-    # Use same seed for both to ensure comparable splits
-    split_baseline = split_dataset(baseline, args.train_frac, args.val_frac, args.seed)
-    split_biased = split_dataset(biased, args.train_frac, args.val_frac, args.seed)
-
-    # Create urban-augmented splits
-    split_baseline_urban, feature_names_urban = add_urban_feature(
-        split_baseline, baseline.feature_names
-    )
-    split_biased_urban, _ = add_urban_feature(split_biased, biased.feature_names)
-
-    param_grid = build_param_grid()
-    print(f"Hyperparameter grid size: {len(param_grid)} configurations")
-
-    print("Training base models...")
-    base_baseline_model, base_baseline_params, base_baseline_val, _ = train_with_validation(
-        split_baseline, param_grid, args.seed, baseline.feature_names
-    )
-    base_biased_model, base_biased_params, base_biased_val, _ = train_with_validation(
-        split_biased, param_grid, args.seed, biased.feature_names
+    # Create progress display
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40),
+        TaskProgressColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        expand=False,
     )
 
-    print("Training urban models...")
-    urban_baseline_model, urban_baseline_params, urban_baseline_val, _ = train_with_validation(
-        split_baseline_urban, param_grid, args.seed, feature_names_urban
-    )
-    urban_biased_model, urban_biased_params, urban_biased_val, _ = train_with_validation(
-        split_biased_urban, param_grid, args.seed, feature_names_urban
-    )
+    with progress:
+        # Loading datasets
+        load_task = progress.add_task("[cyan]Loading datasets...", total=2)
+        baseline = build_dataset("baseline", args.baseline)
+        progress.advance(load_task)
+        biased = build_dataset("biased", args.biased)
+        progress.advance(load_task)
 
-    print("Computing bootstrap confidence intervals...")
-    # In-dataset test predictions
-    base_baseline_preds = list(base_baseline_model.predict(split_baseline.X_test))
-    base_biased_preds = list(base_biased_model.predict(split_biased.X_test))
-    urban_baseline_preds = list(urban_baseline_model.predict(split_baseline_urban.X_test))
-    urban_biased_preds = list(urban_biased_model.predict(split_biased_urban.X_test))
+        # Show dataset summary
+        progress.stop()
+        table = Table(title="Dataset Summary", show_header=True, header_style="bold magenta")
+        table.add_column("Dataset", style="cyan")
+        table.add_column("Patients", justify="right")
+        table.add_column("Features", justify="right")
+        table.add_row("Baseline", f"{len(baseline.patient_ids):,}", str(len(baseline.feature_names)))
+        table.add_row("Biased", f"{len(biased.patient_ids):,}", str(len(biased.feature_names)))
+        console.print(table)
+        console.print()
+        progress.start()
 
-    # Cross-dataset predictions
-    base_biased_on_baseline_preds = list(base_biased_model.predict(split_baseline.X_test))
-    base_baseline_on_biased_preds = list(base_baseline_model.predict(split_biased.X_test))
-    urban_biased_on_baseline_preds = list(urban_biased_model.predict(split_baseline_urban.X_test))
-    urban_baseline_on_biased_preds = list(urban_baseline_model.predict(split_biased_urban.X_test))
+        # Splitting datasets
+        split_task = progress.add_task("[cyan]Splitting datasets...", total=2)
+        split_baseline = split_dataset(baseline, args.train_frac, args.val_frac, args.seed)
+        progress.advance(split_task)
+        split_biased = split_dataset(biased, args.train_frac, args.val_frac, args.seed)
+        progress.advance(split_task)
 
-    # Bootstrap CIs for all evaluations
-    bootstrap_results = {
-        "base_baseline_in": bootstrap_metrics(
-            split_baseline.y_test, base_baseline_preds, args.n_bootstrap, args.seed
-        ),
-        "base_biased_in": bootstrap_metrics(
-            split_biased.y_test, base_biased_preds, args.n_bootstrap, args.seed
-        ),
-        "urban_baseline_in": bootstrap_metrics(
-            split_baseline_urban.y_test, urban_baseline_preds, args.n_bootstrap, args.seed
-        ),
-        "urban_biased_in": bootstrap_metrics(
-            split_biased_urban.y_test, urban_biased_preds, args.n_bootstrap, args.seed
-        ),
-        "base_biased_on_baseline": bootstrap_metrics(
-            split_baseline.y_test, base_biased_on_baseline_preds, args.n_bootstrap, args.seed
-        ),
-        "base_baseline_on_biased": bootstrap_metrics(
-            split_biased.y_test, base_baseline_on_biased_preds, args.n_bootstrap, args.seed
-        ),
-        "urban_biased_on_baseline": bootstrap_metrics(
-            split_baseline_urban.y_test, urban_biased_on_baseline_preds, args.n_bootstrap, args.seed
-        ),
-        "urban_baseline_on_biased": bootstrap_metrics(
-            split_biased_urban.y_test, urban_baseline_on_biased_preds, args.n_bootstrap, args.seed
-        ),
-    }
+        # Create urban-augmented splits
+        split_baseline_urban, feature_names_urban = add_urban_feature(
+            split_baseline, baseline.feature_names
+        )
+        split_biased_urban, _ = add_urban_feature(split_biased, biased.feature_names)
 
-    print("Running permutation tests...")
-    # Test if cross-population performance differs significantly
-    permutation_results = {
-        "base_cross_pop": permutation_test(
-            split_baseline.y_test, base_biased_on_baseline_preds,
-            split_biased.y_test, base_biased_preds,
-            args.n_permutations, args.seed, "mae"
-        ),
-        "urban_cross_pop": permutation_test(
-            split_baseline_urban.y_test, urban_biased_on_baseline_preds,
-            split_biased_urban.y_test, urban_biased_preds,
-            args.n_permutations, args.seed, "mae"
-        ),
-        "base_vs_urban_baseline": permutation_test(
-            split_baseline.y_test, base_baseline_preds,
-            split_baseline_urban.y_test, urban_baseline_preds,
-            args.n_permutations, args.seed, "mae"
-        ),
-        "base_vs_urban_biased": permutation_test(
-            split_biased.y_test, base_biased_preds,
-            split_biased_urban.y_test, urban_biased_preds,
-            args.n_permutations, args.seed, "mae"
-        ),
-    }
+        param_grid = build_param_grid()
+        total_grid = len(param_grid)
+
+        # Training models - 4 models, each with full grid search
+        train_task = progress.add_task(
+            "[green]Training models (grid search)...",
+            total=total_grid * 4
+        )
+
+        def advance_train() -> None:
+            progress.advance(train_task)
+
+        base_baseline_model, base_baseline_params, base_baseline_val, _ = train_with_validation(
+            split_baseline, param_grid, args.seed, baseline.feature_names, advance_train
+        )
+        base_biased_model, base_biased_params, base_biased_val, _ = train_with_validation(
+            split_biased, param_grid, args.seed, biased.feature_names, advance_train
+        )
+        urban_baseline_model, urban_baseline_params, urban_baseline_val, _ = train_with_validation(
+            split_baseline_urban, param_grid, args.seed, feature_names_urban, advance_train
+        )
+        urban_biased_model, urban_biased_params, urban_biased_val, _ = train_with_validation(
+            split_biased_urban, param_grid, args.seed, feature_names_urban, advance_train
+        )
+
+        # In-dataset test predictions
+        base_baseline_preds = list(base_baseline_model.predict(split_baseline.X_test))
+        base_biased_preds = list(base_biased_model.predict(split_biased.X_test))
+        urban_baseline_preds = list(urban_baseline_model.predict(split_baseline_urban.X_test))
+        urban_biased_preds = list(urban_biased_model.predict(split_biased_urban.X_test))
+
+        # Cross-dataset predictions
+        base_biased_on_baseline_preds = list(base_biased_model.predict(split_baseline.X_test))
+        base_baseline_on_biased_preds = list(base_baseline_model.predict(split_biased.X_test))
+        urban_biased_on_baseline_preds = list(urban_biased_model.predict(split_baseline_urban.X_test))
+        urban_baseline_on_biased_preds = list(urban_baseline_model.predict(split_biased_urban.X_test))
+
+        # Bootstrap CIs - 8 evaluations × n_bootstrap iterations
+        bootstrap_task = progress.add_task(
+            "[yellow]Bootstrap confidence intervals...",
+            total=args.n_bootstrap * 8
+        )
+
+        def advance_bootstrap() -> None:
+            progress.advance(bootstrap_task)
+
+        bootstrap_results = {
+            "base_baseline_in": bootstrap_metrics(
+                split_baseline.y_test, base_baseline_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "base_biased_in": bootstrap_metrics(
+                split_biased.y_test, base_biased_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "urban_baseline_in": bootstrap_metrics(
+                split_baseline_urban.y_test, urban_baseline_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "urban_biased_in": bootstrap_metrics(
+                split_biased_urban.y_test, urban_biased_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "base_biased_on_baseline": bootstrap_metrics(
+                split_baseline.y_test, base_biased_on_baseline_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "base_baseline_on_biased": bootstrap_metrics(
+                split_biased.y_test, base_baseline_on_biased_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "urban_biased_on_baseline": bootstrap_metrics(
+                split_baseline_urban.y_test, urban_biased_on_baseline_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+            "urban_baseline_on_biased": bootstrap_metrics(
+                split_biased_urban.y_test, urban_baseline_on_biased_preds, args.n_bootstrap, args.seed,
+                progress_callback=advance_bootstrap
+            ),
+        }
+
+        # Permutation tests - 4 tests × n_permutations iterations
+        perm_task = progress.add_task(
+            "[magenta]Permutation tests...",
+            total=args.n_permutations * 4
+        )
+
+        def advance_perm() -> None:
+            progress.advance(perm_task)
+
+        permutation_results = {
+            "base_cross_pop": permutation_test(
+                split_baseline.y_test, base_biased_on_baseline_preds,
+                split_biased.y_test, base_biased_preds,
+                args.n_permutations, args.seed, "mae", advance_perm
+            ),
+            "urban_cross_pop": permutation_test(
+                split_baseline_urban.y_test, urban_biased_on_baseline_preds,
+                split_biased_urban.y_test, urban_biased_preds,
+                args.n_permutations, args.seed, "mae", advance_perm
+            ),
+            "base_vs_urban_baseline": permutation_test(
+                split_baseline.y_test, base_baseline_preds,
+                split_baseline_urban.y_test, urban_baseline_preds,
+                args.n_permutations, args.seed, "mae", advance_perm
+            ),
+            "base_vs_urban_biased": permutation_test(
+                split_biased.y_test, base_biased_preds,
+                split_biased_urban.y_test, urban_biased_preds,
+                args.n_permutations, args.seed, "mae", advance_perm
+            ),
+        }
 
     # Legacy analysis for backward compatibility with report
     analysis = analyze_models(
