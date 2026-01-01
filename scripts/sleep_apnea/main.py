@@ -129,7 +129,11 @@ class GBDTParams(TypedDict):
     min_samples_leaf: int
 
 
-def build_dataset(label: str, base_dir: str) -> Dataset:
+def build_dataset(
+    label: str,
+    base_dir: str,
+    progress_callback: Optional[Callable[[str, int], None]] = None,
+) -> Dataset:
     """Build the regression dataset from Synthea CSV exports.
     
     Features extracted (base model):
@@ -139,6 +143,9 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
     - hypertension: Hypertension diagnosis indicator
     
     The urban flag is stored separately and can be added for the urban model variant.
+    
+    Args:
+        progress_callback: Optional callback(file_name, rows_processed) for progress.
     """
     csv_dir = find_csv_dir(base_dir)
     patients_path = csv_dir / "patients.csv"
@@ -156,6 +163,7 @@ def build_dataset(label: str, base_dir: str) -> Dataset:
         SLEEP_REASON_CODES,
         SLEEP_ENCOUNTER_CODES,
         SLEEP_EQUIPMENT_CODES,
+        progress_callback=progress_callback,
     )
     
     # Load urban/rural flags for each patient
@@ -555,12 +563,32 @@ def main() -> int:
     )
 
     with progress:
-        # Loading datasets
-        load_task = progress.add_task("[cyan]Loading datasets...", total=2)
-        baseline = build_dataset("baseline", args.baseline)
-        progress.advance(load_task)
-        biased = build_dataset("biased", args.biased)
-        progress.advance(load_task)
+        # Loading datasets - estimate ~8M rows total per dataset (procedures + encounters + meds + devices + supplies)
+        estimated_rows_per_dataset = 8_000_000
+        load_task = progress.add_task(
+            "[cyan]Loading baseline...",
+            total=estimated_rows_per_dataset
+        )
+
+        def make_load_callback(task_id: int, dataset_name: str) -> Callable[[str, int], None]:
+            """Create a progress callback for dataset loading."""
+            file_progress: Dict[str, int] = {}
+            def callback(file_name: str, rows: int) -> None:
+                prev = file_progress.get(file_name, 0)
+                file_progress[file_name] = rows
+                progress.advance(task_id, rows - prev)
+                progress.update(task_id, description=f"[cyan]{dataset_name}: {file_name} ({rows:,} rows)")
+            return callback
+
+        baseline = build_dataset("baseline", args.baseline, make_load_callback(load_task, "Baseline"))
+        progress.update(load_task, completed=estimated_rows_per_dataset)
+
+        load_task2 = progress.add_task(
+            "[cyan]Loading biased...",
+            total=estimated_rows_per_dataset
+        )
+        biased = build_dataset("biased", args.biased, make_load_callback(load_task2, "Biased"))
+        progress.update(load_task2, completed=estimated_rows_per_dataset)
 
         # Show dataset summary
         progress.stop()

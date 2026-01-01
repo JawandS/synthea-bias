@@ -6,7 +6,7 @@ import csv
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
-from typing import Collection, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Collection, Dict, List, Optional, Sequence, Tuple
 
 
 def find_csv_dir(path_str: str) -> Path:
@@ -60,26 +60,25 @@ def parse_date(value: Optional[str]) -> Optional[date]:
 
 
 def find_dataset_end_date(csv_dir: Path) -> Optional[date]:
-    """Return the latest date found across all CSVs in a dataset directory."""
+    """Return the latest date found in the patients.csv file.
+    
+    Only checks birthdate and deathdate columns in patients.csv for speed,
+    rather than scanning all CSV files which can be very slow.
+    """
+    patients_path = csv_dir / "patients.csv"
+    if not patients_path.exists():
+        return None
+    
     latest: Optional[date] = None
-    for path in sorted(csv_dir.glob("*.csv")):
-        if not path.is_file():
-            continue
-        with path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            fieldnames = reader.fieldnames or []
-            date_fields = [
-                name
-                for name in fieldnames
-                if any(token in name.lower() for token in ("date", "start", "stop"))
-            ]
-            if not date_fields:
-                continue
-            for row in reader:
-                for field in date_fields:
-                    parsed = parse_date(row.get(field))
-                    if parsed and (latest is None or parsed > latest):
-                        latest = parsed
+    with patients_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        header_map = make_header_map(reader.fieldnames)
+        for row in reader:
+            for field in ["deathdate", "birthdate"]:
+                val = get_value(row, header_map, [field])
+                parsed = parse_date(val)
+                if parsed and (latest is None or parsed > latest):
+                    latest = parsed
     return latest
 
 
@@ -292,17 +291,26 @@ def load_sleep_spend(
     sleep_reason_codes: Collection[str],
     sleep_encounter_codes: Collection[str],
     sleep_equipment_codes: Collection[str],
+    progress_callback: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, float]:
-    """Sum sleep-related spend per patient across procedures, encounters, meds, and supplies."""
+    """Sum sleep-related spend per patient across procedures, encounters, meds, and supplies.
+    
+    Args:
+        progress_callback: Optional callback(file_name, rows_processed) for progress reporting.
+    """
     spend: Dict[str, float] = defaultdict(float)
     sleep_encounters = set()
 
     procedures_path = csv_dir / "procedures.csv"
     if procedures_path.exists():
+        row_count = 0
         with procedures_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             header_map = make_header_map(reader.fieldnames)
             for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 100000 == 0:
+                    progress_callback("procedures.csv", row_count)
                 code = get_value(row, header_map, ["code"])
                 reason_code = get_value(row, header_map, ["reasoncode"])
                 if code not in sleep_procedure_codes and reason_code not in sleep_reason_codes:
@@ -311,13 +319,19 @@ def load_sleep_spend(
                 cost = parse_float(get_value(row, header_map, ["base_cost"]))
                 if patient_id and cost is not None:
                     spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("procedures.csv", row_count)
 
     encounters_path = csv_dir / "encounters.csv"
     if encounters_path.exists():
+        row_count = 0
         with encounters_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             header_map = make_header_map(reader.fieldnames)
             for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 100000 == 0:
+                    progress_callback("encounters.csv", row_count)
                 code = get_value(row, header_map, ["code"])
                 reason_code = get_value(row, header_map, ["reasoncode"])
                 if reason_code not in sleep_reason_codes and code not in sleep_encounter_codes:
@@ -331,13 +345,19 @@ def load_sleep_spend(
                     cost = parse_float(get_value(row, header_map, ["base_encounter_cost"]))
                 if patient_id and cost is not None:
                     spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("encounters.csv", row_count)
 
     medications_path = csv_dir / "medications.csv"
     if medications_path.exists():
+        row_count = 0
         with medications_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             header_map = make_header_map(reader.fieldnames)
             for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 100000 == 0:
+                    progress_callback("medications.csv", row_count)
                 reason_code = get_value(row, header_map, ["reasoncode"])
                 if reason_code not in sleep_reason_codes:
                     continue
@@ -345,6 +365,8 @@ def load_sleep_spend(
                 cost = parse_float(get_value(row, header_map, ["totalcost"]))
                 if patient_id and cost is not None:
                     spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("medications.csv", row_count)
 
     repo_root = Path(__file__).resolve().parents[2]
     costs_dir = repo_root / "src" / "main" / "resources" / "costs"
@@ -352,10 +374,14 @@ def load_sleep_spend(
 
     devices_path = csv_dir / "devices.csv"
     if devices_path.exists():
+        row_count = 0
         with devices_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             header_map = make_header_map(reader.fieldnames)
             for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 50000 == 0:
+                    progress_callback("devices.csv", row_count)
                 code = get_value(row, header_map, ["code"])
                 if not code:
                     continue
@@ -369,13 +395,19 @@ def load_sleep_spend(
                 patient_id = get_value(row, header_map, ["patient"])
                 if patient_id:
                     spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("devices.csv", row_count)
 
     supplies_path = csv_dir / "supplies.csv"
     if supplies_path.exists():
+        row_count = 0
         with supplies_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.DictReader(handle)
             header_map = make_header_map(reader.fieldnames)
             for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 50000 == 0:
+                    progress_callback("supplies.csv", row_count)
                 code = get_value(row, header_map, ["code"])
                 if not code:
                     continue
@@ -388,6 +420,8 @@ def load_sleep_spend(
                 patient_id = get_value(row, header_map, ["patient"])
                 if patient_id:
                     spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("supplies.csv", row_count)
 
     return spend
 
