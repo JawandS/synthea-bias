@@ -1,6 +1,6 @@
 # Sleep Apnea Demand Modeling: Findings Report
 
-Generated: 2026-01-01T10:02:51
+Generated: 2026-01-01T11:31:37
 
 > See [README.md](README.md) for study methodology, feature definitions, and clinical codes.
 
@@ -19,14 +19,14 @@ Generated: 2026-01-01T10:02:51
 
 | Metric | Baseline | Biased |
 | --- | ---: | ---: |
-| Total patients | 5,000 | 5,000 |
-| Urban | 69.14% | 69.14% |
-| Rural | 30.86% | 30.86% |
-| Sleep disorder (module entry) | 224 | 224 |
-| Sleep apnea diagnosed | 224 | 179 |
-| Sleep apnea prevalence | 4.48% | 3.58% |
-| Dropouts | 0 | 45 |
-| Dropout rate (of sleep disorder) | 0.00% | 20.09% |
+| Total patients | 20,106 | 20,061 |
+| Urban | 72.56% | 72.56% |
+| Rural | 27.44% | 27.44% |
+| Sleep disorder (module entry) | 1712 | 1707 |
+| Sleep apnea diagnosed | 1710 | 1322 |
+| Sleep apnea prevalence | 8.50% | 6.59% |
+| Dropouts | 2 | 385 |
+| Dropout rate (of sleep disorder) | 0.12% | 22.55% |
 
 ## Spend Distribution
 
@@ -34,35 +34,43 @@ Generated: 2026-01-01T10:02:51
 | --- | ---: | ---: |
 | Median spend | $0.00 | $0.00 |
 | 90th percentile spend | $0.00 | $0.00 |
-| Mean spend (nonzero) | $9,521.77 | $7,387.97 |
+| Mean spend (nonzero) | $9,576.02 | $7,797.39 |
+
+## Nonzero Spend Rate
+
+| Cohort | Baseline | Biased |
+| --- | ---: | ---: |
+| Overall | 8.51% (1712/20106) | 8.51% (1707/20061) |
+| Sleep disorder cohort | 100.00% (1712/1712) | 100.00% (1707/1707) |
+| Sleep apnea cohort | 100.00% (1710/1710) | 100.00% (1322/1322) |
 
 ## Dataset Summary
 | Metric | Baseline | Biased |
 | --- | ---: | ---: |
-| Sample size | 5,000 | 5,000 |
-| Mean spend | $426.58 | $330.98 |
-| Nonzero rate | 4.5% | 4.5% |
-| Train/Val/Test split | 3500/750/750 | 3500/750/750 |
+| Sample size | 20,106 | 20,061 |
+| Mean spend | $815.39 | $663.48 |
+| Nonzero rate | 8.5% | 8.5% |
+| Train/Val/Test split | 14074/3015/3017 | 14042/3009/3010 |
 
 ## GBDT Model Selection
 
 | Dataset | Best Hyperparameters | Val MAE | Val R² |
 | --- | --- | ---: | ---: |
-| Baseline | n=500, lr=0.1, depth=4, leaf=5 | $323 | -0.022 |
-| Biased | n=100, lr=0.01, depth=2, leaf=20 | $235 | -0.018 |
+| Baseline | n=100, lr=0.01, depth=2, leaf=5 | $829 | -0.044 |
+| Biased | n=100, lr=0.01, depth=3, leaf=20 | $687 | -0.044 |
 
 ## Feature Importances
 
 | Feature | Baseline | Biased |
 | --- | --- | --- |
-| age_years | 0.357 | 0.071 |
-| income | 0.302 | 0.020 |
-| hypertension | 0.180 | 0.778 |
-| bmi | 0.107 | 0.000 |
-| male | 0.039 | 0.132 |
-| alcohol_use | 0.011 | 0.000 |
-| chf | 0.004 | 0.000 |
+| hypertension | 0.800 | 0.735 |
+| age_years | 0.133 | 0.157 |
+| male | 0.067 | 0.102 |
+| income | 0.000 | 0.000 |
+| bmi | 0.000 | 0.006 |
 | smoker | 0.000 | 0.000 |
+| alcohol_use | 0.000 | 0.000 |
+| chf | 0.000 | 0.000 |
 
 ## Model Performance
 
@@ -70,22 +78,22 @@ Generated: 2026-01-01T10:02:51
 
 | Model | Test Set | MAE | RMSE | R² |
 | --- | --- | ---: | ---: | ---: |
-| Baseline | Baseline | $487 | $2,887 | -0.026 |
-| Biased | Biased | $360 | $2,468 | -0.021 |
+| Baseline | Baseline | $801 | $3,259 | -0.063 |
+| Biased | Biased | $717 | $3,191 | -0.052 |
 
 ### Cross-Dataset Test Results
 
 | Model | Test Set | MAE | RMSE | R² |
 | --- | --- | ---: | ---: | ---: |
-| Biased | Baseline | $483 | $2,891 | -0.028 |
-| Baseline | Biased | $351 | $2,399 | 0.034 |
+| Biased | Baseline | $801 | $3,259 | -0.063 |
+| Baseline | Biased | $717 | $3,191 | -0.052 |
 
 ### Prediction Bias (Baseline Test Set)
 
 | Model | Mean Prediction | Actual Mean | Difference | Rel. Error |
 | --- | ---: | ---: | ---: | ---: |
-| Baseline | $5.90 | $482.87 | $-476.97 | -98.78% |
-| Biased | $0.54 | $482.87 | $-482.33 | -99.89% |
+| Baseline | $1.70 | $800.37 | $-798.67 | -99.79% |
+| Biased | $1.61 | $800.37 | $-798.77 | -99.80% |
 
 ---
 
@@ -100,48 +108,48 @@ rural patients after controlling for clinical factors. See README.md for methodo
 
 | Dataset | Urban Effect (%) | 95% CI | p-value | Significant? |
 | --- | ---: | --- | ---: | :---: |
-| Baseline | -0.22% | [-12.52%, +13.17%] | 0.9680 | No |
-| Biased | +11.75% | [-0.44%, +26.14%] | 0.0819 | No |
+| Baseline | -1.23% | [-9.18%, +7.38%] | 0.7662 | No |
+| Biased | +8.83% | [+0.61%, +17.98%] | 0.0310 | Yes |
 
 ### Key Finding
 
 | Metric | Value |
 | --- | ---: |
-| Baseline urban effect | -0.22% |
-| Biased urban effect | +11.75% |
-| **Bias-induced disparity** | **+11.98%** |
-| Baseline R² (log1p) | 0.0965 |
-| Biased R² (log1p) | 0.0835 |
+| Baseline urban effect | -1.23% |
+| Biased urban effect | +8.83% |
+| **Bias-induced disparity** | **+10.06%** |
+| Baseline R² (log1p) | 0.1679 |
+| Biased R² (log1p) | 0.1628 |
 
-> The biased dataset shows rural patients spending **12.0% more** than in baseline, which is unexpected.
+> The biased dataset shows rural patients spending **10.1% more** than in baseline, which is unexpected.
 
 ### Standardized Coefficients
 
 | Feature | Baseline | Biased |
 | --- | ---: | ---: |
-| age_years | 0.13 | 0.18 |
-| male | 0.15 | 0.12 |
-| income | -0.00 | 0.00 |
-| bmi | 0.04 | 0.01 |
-| smoker | -0.00 | -0.00 |
-| alcohol_use | 0.08 | 0.03 |
-| hypertension | 0.44 | 0.43 |
-| chf | -0.01 | -0.05 |
-| urban | -0.00 | 0.05 |
+| age_years | 0.35 | 0.31 |
+| male | 0.25 | 0.23 |
+| income | -0.02 | 0.02 |
+| bmi | 0.04 | 0.04 |
+| smoker | -0.01 | -0.01 |
+| alcohol_use | 0.01 | 0.04 |
+| hypertension | 0.71 | 0.66 |
+| chf | 0.02 | 0.04 |
+| urban | -0.01 | 0.04 |
 
 ## Statistical Confidence (Bootstrap)
 
 | Evaluation | MAE [95% CI] | R² [95% CI] |
 | --- | --- | --- |
-| Baseline → Baseline | 487.23 [298.86, 682.74] | -0.03 [-0.04, -0.02] |
-| Biased → Biased | 359.78 [205.17, 538.36] | -0.02 [-0.03, -0.01] |
-| Biased → Baseline | 483.28 [294.29, 678.12] | -0.03 [-0.04, -0.02] |
-| Baseline → Biased | 351.23 [200.95, 524.28] | 0.03 [-0.02, 0.12] |
+| Baseline → Baseline | 801.22 [686.09, 918.24] | -0.06 [-0.08, -0.05] |
+| Biased → Biased | 716.51 [605.70, 828.60] | -0.05 [-0.06, -0.04] |
+| Biased → Baseline | 801.11 [686.00, 918.14] | -0.06 [-0.08, -0.05] |
+| Baseline → Biased | 716.60 [605.80, 828.71] | -0.05 [-0.06, -0.04] |
 
 *1000 bootstrap iterations, 95% CIs*
 
 ## Hypothesis Test (Permutation)
 
-Cross-population MAE difference: 123.50 (p = 0.3726, not significant)
+Cross-population MAE difference: 84.60 (p = 0.3057, not significant)
 
 *1000 permutations, two-sided test*
