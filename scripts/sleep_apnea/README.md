@@ -14,7 +14,7 @@ Pick a state with rural counties (e.g., Maine) so the rural branch is exercised.
   --exporter.csv.export=true \
   --exporter.csv.append_mode=true \
   --exporter.baseDirectory=./output_baseline \
-  Maine
+  Montana 
 ```
 
 ### Biased Dataset (Rural Access Bias)
@@ -24,7 +24,7 @@ Pick a state with rural counties (e.g., Maine) so the rural branch is exercised.
   --exporter.csv.append_mode=true \
   --exporter.baseDirectory=./output_rural_bias \
   --module_override=/home/js/contracts/synthea-bias/config/overrides_rural_sleep_apnea.properties \
-  Maine
+  Montana 
 ```
 
 ### Run Analysis
