@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Train and compare sleep apnea spend models across baseline and biased datasets.
 
-This study builds spend prediction models and then quantifies geographic access
-bias using a separate linear regression that includes the urban/rural flag.
+This study builds spend prediction models (using log1p spend targets) and then
+quantifies geographic access bias using a separate linear regression that
+includes the urban/rural flag.
 
 Model Variants:
 - base GBDT: Core features only (age, gender, income, BMI, smoking, alcohol use, hypertension, CHF)
@@ -14,6 +15,7 @@ testing for cross-population hypothesis tests.
 
 import argparse
 import csv
+import math
 import random
 from dataclasses import dataclass, field
 from datetime import date
@@ -157,6 +159,7 @@ def build_dataset(
     - chf: Congestive heart failure indicator
     
     The urban flag is stored separately for the linear bias model.
+    Spend targets are stored in raw dollars; models log1p-transform during training.
     
     Args:
         progress_callback: Optional callback(file_name, rows_processed) for progress.
@@ -327,10 +330,13 @@ def train_with_validation(
     best_params = None
     best_metrics = None
 
+    y_train_log = [math.log1p(value) for value in split.y_train]
+
     for params in param_grid:
         model = GradientBoostingRegressor(random_state=seed, **params)
-        model.fit(split.X_train, split.y_train)
-        preds = model.predict(split.X_val)
+        model.fit(split.X_train, y_train_log)
+        preds_log = model.predict(split.X_val)
+        preds = [max(math.expm1(value), 0.0) for value in preds_log]
         metrics = evaluate_predictions(split.y_val, preds)
         if best_metrics is None or metrics["mae"] < best_metrics["mae"]:
             best_model = model
@@ -345,8 +351,9 @@ def train_with_validation(
     # Refit on combined train+val to maximize training data with the chosen params.
     X_train_val = split.X_train + split.X_val
     y_train_val = split.y_train + split.y_val
+    y_train_val_log = [math.log1p(value) for value in y_train_val]
     final_model = GradientBoostingRegressor(random_state=seed, **best_params)
-    final_model.fit(X_train_val, y_train_val)
+    final_model.fit(X_train_val, y_train_val_log)
 
     return final_model, best_params, best_metrics, feature_names
 
@@ -463,7 +470,7 @@ def fit_linear_bias_model(
     """Fit linear regression with urban feature to quantify geographic bias.
     
     The urban coefficient represents the effect of being urban (vs rural)
-    on healthcare spending, controlling for the base demographic and clinical features.
+    on log1p healthcare spending, controlling for the base demographic and clinical features.
     
     A significant negative coefficient in the biased dataset indicates rural
     patients have lower spending due to access barriers, not lower need.
@@ -482,14 +489,14 @@ def fit_linear_bias_model(
     
     X_train = _add_urban(split.X_train, split.train_urban)
     X_test = _add_urban(split.X_test, split.test_urban)
-    y_train = split.y_train
-    y_test = split.y_test
+    y_train_log = [math.log1p(value) for value in split.y_train]
+    y_test_log = [math.log1p(value) for value in split.y_test]
     
     feature_names_with_urban = feature_names + ["urban"]
     
     # Fit on full training data
     model = LinearRegression()
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train_log)
     
     # Get unstandardized coefficients
     coefficients = {name: coef for name, coef in zip(feature_names_with_urban, model.coef_)}
@@ -499,15 +506,16 @@ def fit_linear_bias_model(
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     model_scaled = LinearRegression()
-    model_scaled.fit(X_train_scaled, y_train)
+    model_scaled.fit(X_train_scaled, y_train_log)
     standardized_coefficients = {
         name: coef for name, coef in zip(feature_names_with_urban, model_scaled.coef_)
     }
     
     # R² on test set
-    y_pred = model.predict(X_test)
-    ss_res = sum((yt - yp) ** 2 for yt, yp in zip(y_test, y_pred))
-    ss_tot = sum((yt - sum(y_test) / len(y_test)) ** 2 for yt in y_test)
+    y_pred_log = model.predict(X_test)
+    ss_res = sum((yt - yp) ** 2 for yt, yp in zip(y_test_log, y_pred_log))
+    mean_test = sum(y_test_log) / len(y_test_log)
+    ss_tot = sum((yt - mean_test) ** 2 for yt in y_test_log)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
     
     # Bootstrap confidence intervals for coefficients
@@ -519,7 +527,7 @@ def fit_linear_bias_model(
         # Resample training data
         indices = [rng.randint(0, n_train - 1) for _ in range(n_train)]
         X_boot = [X_train[i] for i in indices]
-        y_boot = [y_train[i] for i in indices]
+        y_boot = [y_train_log[i] for i in indices]
         
         # Fit bootstrap model
         boot_model = LinearRegression()
@@ -563,7 +571,7 @@ def fit_linear_bias_model(
         X_perm = [row + [u] for row, u in zip(X_train_no_urban, shuffled_urban)]
         
         perm_model = LinearRegression()
-        perm_model.fit(X_perm, y_train)
+        perm_model.fit(X_perm, y_train_log)
         perm_urban_coef = perm_model.coef_[-1]  # Urban is last feature
         
         if abs(perm_urban_coef) >= abs(observed_urban_coef):
@@ -832,12 +840,24 @@ def main() -> int:
         )
 
         # In-dataset test predictions (base models only)
-        base_baseline_preds = list(base_baseline_model.predict(split_baseline.X_test))
-        base_biased_preds = list(base_biased_model.predict(split_biased.X_test))
+        base_baseline_preds_log = list(base_baseline_model.predict(split_baseline.X_test))
+        base_biased_preds_log = list(base_biased_model.predict(split_biased.X_test))
+        base_baseline_preds = [max(math.expm1(value), 0.0) for value in base_baseline_preds_log]
+        base_biased_preds = [max(math.expm1(value), 0.0) for value in base_biased_preds_log]
 
         # Cross-dataset predictions (base models only)
-        base_biased_on_baseline_preds = list(base_biased_model.predict(split_baseline.X_test))
-        base_baseline_on_biased_preds = list(base_baseline_model.predict(split_biased.X_test))
+        base_biased_on_baseline_preds_log = list(
+            base_biased_model.predict(split_baseline.X_test)
+        )
+        base_baseline_on_biased_preds_log = list(
+            base_baseline_model.predict(split_biased.X_test)
+        )
+        base_biased_on_baseline_preds = [
+            max(math.expm1(value), 0.0) for value in base_biased_on_baseline_preds_log
+        ]
+        base_baseline_on_biased_preds = [
+            max(math.expm1(value), 0.0) for value in base_baseline_on_biased_preds_log
+        ]
 
         # Bootstrap CIs - 4 evaluations × n_bootstrap iterations (reduced from 8)
         bootstrap_task = progress.add_task(
@@ -891,16 +911,23 @@ def main() -> int:
         border_style="green"
     ))
     
-    bias_table = Table(title="Urban Coefficient (Rural Access Disparity)", show_header=True, header_style="bold")
+    bias_table = Table(
+        title="Urban Effect (Rural Access Disparity)",
+        show_header=True,
+        header_style="bold",
+    )
     bias_table.add_column("Dataset", style="cyan")
-    bias_table.add_column("Urban Coef ($)", justify="right")
-    bias_table.add_column("95% CI", justify="right")
+    bias_table.add_column("Urban Effect (%)", justify="right")
+    bias_table.add_column("95% CI (%)", justify="right")
     bias_table.add_column("p-value", justify="right")
     bias_table.add_column("Significant?", justify="center")
     
     def format_coef(ba: BiasAnalysis) -> Tuple[str, str, str, str]:
-        coef = f"${ba.urban_coefficient:,.0f}"
-        ci = f"[${ba.urban_ci_low:,.0f}, ${ba.urban_ci_high:,.0f}]"
+        effect = math.expm1(ba.urban_coefficient) * 100
+        ci_low = math.expm1(ba.urban_ci_low) * 100
+        ci_high = math.expm1(ba.urban_ci_high) * 100
+        coef = f"{effect:+.2f}%"
+        ci = f"[{ci_low:+.2f}%, {ci_high:+.2f}%]"
         pval = f"{ba.urban_pvalue:.4f}"
         sig = "✓ Yes" if ba.urban_pvalue < 0.05 else "✗ No"
         return coef, ci, pval, sig
@@ -913,14 +940,23 @@ def main() -> int:
     console.print(bias_table)
     
     # Interpretation
-    diff = bias_biased.urban_coefficient - bias_baseline.urban_coefficient
+    diff = (
+        math.expm1(bias_biased.urban_coefficient)
+        - math.expm1(bias_baseline.urban_coefficient)
+    ) * 100
     console.print()
     console.print(f"[bold]Interpretation:[/bold]")
-    console.print(f"  • Baseline urban coefficient: ${bias_baseline.urban_coefficient:,.0f}")
-    console.print(f"  • Biased urban coefficient: ${bias_biased.urban_coefficient:,.0f}")
-    console.print(f"  • Difference (bias effect): ${diff:,.0f}")
+    console.print(
+        f"  • Baseline urban effect: {math.expm1(bias_baseline.urban_coefficient) * 100:+.2f}%"
+    )
+    console.print(
+        f"  • Biased urban effect: {math.expm1(bias_biased.urban_coefficient) * 100:+.2f}%"
+    )
+    console.print(f"  • Difference (bias effect): {diff:+.2f}%")
     if diff < 0:
-        console.print(f"  • [yellow]Rural patients in biased data show ${abs(diff):,.0f} less spending[/yellow]")
+        console.print(
+            f"  • [yellow]Rural patients in biased data show {abs(diff):.2f}% less spending[/yellow]"
+        )
         console.print(f"    [dim]This represents the access disparity captured by the model[/dim]")
     console.print()
 
@@ -934,6 +970,7 @@ def main() -> int:
         biased_model=base_biased_model,
         sleep_disorder_code=SLEEP_DISORDER_CODE,
         sleep_apnea_codes=SLEEP_APNEA_CODES,
+        log_spend=True,
     )
 
     # Feature names with urban for report

@@ -335,34 +335,13 @@ def load_sleep_spend(
     sleep_equipment_codes: Collection[str],
     progress_callback: Optional[Callable[[str, int], None]] = None,
 ) -> Dict[str, float]:
-    """Sum sleep-related spend per patient across procedures, encounters, meds, and supplies.
+    """Sum sleep-specific spend per patient across procedures, encounters, meds, and supplies.
     
     Args:
         progress_callback: Optional callback(file_name, rows_processed) for progress reporting.
     """
     spend: Dict[str, float] = defaultdict(float)
     sleep_encounters = set()
-
-    procedures_path = csv_dir / "procedures.csv"
-    if procedures_path.exists():
-        row_count = 0
-        with procedures_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 100000 == 0:
-                    progress_callback("procedures.csv", row_count)
-                code = get_value(row, header_map, ["code"])
-                reason_code = get_value(row, header_map, ["reasoncode"])
-                if code not in sleep_procedure_codes and reason_code not in sleep_reason_codes:
-                    continue
-                patient_id = get_value(row, header_map, ["patient"])
-                cost = parse_float(get_value(row, header_map, ["base_cost"]))
-                if patient_id and cost is not None:
-                    spend[patient_id] += cost
-        if progress_callback:
-            progress_callback("procedures.csv", row_count)
 
     encounters_path = csv_dir / "encounters.csv"
     if encounters_path.exists():
@@ -376,7 +355,9 @@ def load_sleep_spend(
                     progress_callback("encounters.csv", row_count)
                 code = get_value(row, header_map, ["code"])
                 reason_code = get_value(row, header_map, ["reasoncode"])
-                if reason_code not in sleep_reason_codes and code not in sleep_encounter_codes:
+                if reason_code not in sleep_reason_codes:
+                    continue
+                if code and code not in sleep_encounter_codes:
                     continue
                 encounter_id = get_value(row, header_map, ["id"])
                 if encounter_id:
@@ -390,6 +371,32 @@ def load_sleep_spend(
         if progress_callback:
             progress_callback("encounters.csv", row_count)
 
+    procedures_path = csv_dir / "procedures.csv"
+    if procedures_path.exists():
+        row_count = 0
+        with procedures_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            header_map = make_header_map(reader.fieldnames)
+            for row in reader:
+                row_count += 1
+                if progress_callback and row_count % 100000 == 0:
+                    progress_callback("procedures.csv", row_count)
+                code = get_value(row, header_map, ["code"])
+                reason_code = get_value(row, header_map, ["reasoncode"])
+                encounter_id = get_value(row, header_map, ["encounter"])
+                if (
+                    code not in sleep_procedure_codes
+                    and reason_code not in sleep_reason_codes
+                    and encounter_id not in sleep_encounters
+                ):
+                    continue
+                patient_id = get_value(row, header_map, ["patient"])
+                cost = parse_float(get_value(row, header_map, ["base_cost"]))
+                if patient_id and cost is not None:
+                    spend[patient_id] += cost
+        if progress_callback:
+            progress_callback("procedures.csv", row_count)
+
     medications_path = csv_dir / "medications.csv"
     if medications_path.exists():
         row_count = 0
@@ -401,7 +408,8 @@ def load_sleep_spend(
                 if progress_callback and row_count % 100000 == 0:
                     progress_callback("medications.csv", row_count)
                 reason_code = get_value(row, header_map, ["reasoncode"])
-                if reason_code not in sleep_reason_codes:
+                encounter_id = get_value(row, header_map, ["encounter"])
+                if reason_code not in sleep_reason_codes and encounter_id not in sleep_encounters:
                     continue
                 patient_id = get_value(row, header_map, ["patient"])
                 cost = parse_float(get_value(row, header_map, ["totalcost"]))

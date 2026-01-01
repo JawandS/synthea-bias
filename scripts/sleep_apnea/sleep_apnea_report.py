@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import math
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -94,9 +95,9 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
             "The override file `config/overrides_rural_sleep_apnea.properties` adjusts two complex "
             "transitions in `sleep_apnea.json` for patients with `urban == false`:\n"
             "- `Wait Until Overnight Study`: changes the rural branch from 0% `Terminal` / 100% "
-            "`Overnight Test` to 50% / 50%.\n"
+            "`Overnight Test` to 70% / 30%.\n"
             "- `Appointment Delay`: changes the rural branch from 0% `Terminal` / 100% `Follow Up` "
-            "to 50% / 50%.\n"
+            "to 70% / 30%.\n"
             "This simulates rural patients dropping out before testing or follow-up.\n\n"
         )
 
@@ -143,11 +144,12 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
         handle.write("## Target Definition\n")
         handle.write(
             "Total sleep-related spend per patient, computed as the sum of:\n"
-            "- `procedures.csv` BASE_COST where CODE in sleep-related procedure codes or REASONCODE "
-            "in sleep-related condition codes.\n"
             "- `encounters.csv` TOTAL_CLAIM_COST (fallback BASE_ENCOUNTER_COST) where REASONCODE "
-            "in sleep-related condition codes or encounter CODE in sleep-specific codes.\n"
-            "- `medications.csv` TOTALCOST where REASONCODE in sleep-related condition codes.\n"
+            "is a sleep-related condition code (encounter CODE is used as a secondary filter).\n"
+            "- `procedures.csv` BASE_COST where CODE is a sleep procedure code, REASONCODE is "
+            "sleep-related, or the procedure is tied to a sleep encounter.\n"
+            "- `medications.csv` TOTALCOST where REASONCODE is sleep-related or the medication is "
+            "tied to a sleep encounter.\n"
             "- `devices.csv` MODE cost from costs/devices.csv or costs/supplies.csv for sleep-related "
             "device/supply codes or sleep-related encounters.\n"
             "- `supplies.csv` MODE cost from costs/supplies.csv or costs/devices.csv for sleep-related "
@@ -159,6 +161,10 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
         handle.write(f"Sleep-related encounter codes: {sorted(inputs.sleep_encounter_codes)}\n\n")
         handle.write(f"Sleep-related device codes: {sorted(inputs.sleep_device_codes)}\n")
         handle.write(f"Sleep-related supply codes: {sorted(inputs.sleep_supply_codes)}\n\n")
+        handle.write(
+            "Modeling uses log1p(spend) for training; evaluation metrics are reported in dollars "
+            "after back-transforming predictions.\n\n"
+        )
 
         handle.write("## Features (No Urban/Rural or Race/Ethnicity)\n")
         handle.write(", ".join(inputs.feature_names) + "\n\n")
@@ -268,15 +274,15 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
         handle.write("## Geographic Bias Quantification (Linear Regression)\n\n")
         handle.write("This analysis uses linear regression to quantify the effect of urban/rural status\n")
         handle.write(
-            "on healthcare spending, controlling for age, gender, income, BMI, smoking status,\n"
+            "on log1p healthcare spending, controlling for age, gender, income, BMI, smoking status,\n"
         )
         handle.write("alcohol use disorder, hypertension, and CHF.\n\n")
         handle.write("**Key insight**: The urban coefficient represents the spending difference between\n")
         handle.write("urban and rural patients *after controlling for other factors*. A significant\n")
         handle.write("difference between baseline and biased datasets indicates measurable access disparity.\n\n")
         
-        handle.write("### Urban Coefficient (Access Disparity Measure)\n\n")
-        handle.write("| Dataset | Urban Coef ($) | 95% CI | p-value | Significant? |\n")
+        handle.write("### Urban Effect (Access Disparity Measure)\n\n")
+        handle.write("| Dataset | Urban Effect (%) | 95% CI | p-value | Significant? |\n")
         handle.write("| --- | ---: | --- | ---: | :---: |\n")
         
         bb = inputs.bias_baseline
@@ -285,23 +291,41 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
         sig_b = "Yes" if bb.urban_pvalue < 0.05 else "No"
         sig_bi = "Yes" if bi.urban_pvalue < 0.05 else "No"
         
-        handle.write(f"| Baseline (unbiased) | ${bb.urban_coefficient:,.0f} | [${bb.urban_ci_low:,.0f}, ${bb.urban_ci_high:,.0f}] | {bb.urban_pvalue:.4f} | {sig_b} |\n")
-        handle.write(f"| Biased (rural dropout) | ${bi.urban_coefficient:,.0f} | [${bi.urban_ci_low:,.0f}, ${bi.urban_ci_high:,.0f}] | {bi.urban_pvalue:.4f} | {sig_bi} |\n")
+        bb_effect = math.expm1(bb.urban_coefficient) * 100
+        bi_effect = math.expm1(bi.urban_coefficient) * 100
+        bb_ci = (math.expm1(bb.urban_ci_low) * 100, math.expm1(bb.urban_ci_high) * 100)
+        bi_ci = (math.expm1(bi.urban_ci_low) * 100, math.expm1(bi.urban_ci_high) * 100)
+        handle.write(
+            f"| Baseline (unbiased) | {bb_effect:+.2f}% | "
+            f"[{bb_ci[0]:+.2f}%, {bb_ci[1]:+.2f}%] | {bb.urban_pvalue:.4f} | {sig_b} |\n"
+        )
+        handle.write(
+            f"| Biased (rural dropout) | {bi_effect:+.2f}% | "
+            f"[{bi_ci[0]:+.2f}%, {bi_ci[1]:+.2f}%] | {bi.urban_pvalue:.4f} | {sig_bi} |\n"
+        )
         handle.write("\n")
         
-        diff = bi.urban_coefficient - bb.urban_coefficient
+        diff = bi_effect - bb_effect
         handle.write("### Interpretation\n\n")
-        handle.write(f"- **Baseline urban coefficient**: ${bb.urban_coefficient:,.0f}\n")
-        handle.write(f"- **Biased urban coefficient**: ${bi.urban_coefficient:,.0f}\n")
-        handle.write(f"- **Difference (bias effect)**: ${diff:,.0f}\n\n")
+        handle.write(f"- **Baseline urban effect**: {bb_effect:+.2f}%\n")
+        handle.write(f"- **Biased urban effect**: {bi_effect:+.2f}%\n")
+        handle.write(f"- **Difference (bias effect)**: {diff:+.2f}%\n\n")
         
         if diff < 0:
-            handle.write(f"The biased dataset shows rural patients spending **${abs(diff):,.0f} less** than\n")
-            handle.write("in the baseline dataset, controlling for other factors. This difference represents\n")
+            handle.write(
+                f"The biased dataset shows rural patients spending **{abs(diff):.2f}% less** than\n"
+            )
+            handle.write(
+                "in the baseline dataset, controlling for other factors. This difference represents\n"
+            )
             handle.write("the access disparity introduced by rural dropout.\n\n")
         elif diff > 0:
-            handle.write(f"The biased dataset shows rural patients spending **${diff:,.0f} more** than\n")
-            handle.write("in the baseline dataset. This is unexpected and may indicate other confounding factors.\n\n")
+            handle.write(
+                f"The biased dataset shows rural patients spending **{diff:.2f}% more** than\n"
+            )
+            handle.write(
+                "in the baseline dataset. This is unexpected and may indicate other confounding factors.\n\n"
+            )
         else:
             handle.write("No measurable difference in urban coefficient between datasets.\n\n")
         
@@ -316,7 +340,7 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
             handle.write(f"| {feature} | {b_val:,.2f} | {bi_val:,.2f} |\n")
         handle.write("\n")
         
-        handle.write("### Coefficient Confidence Intervals\n\n")
+        handle.write("### Coefficient Confidence Intervals (log1p scale)\n\n")
         handle.write("| Feature | Baseline Coef [95% CI] | Biased Coef [95% CI] |\n")
         handle.write("| --- | --- | --- |\n")
         
@@ -324,14 +348,14 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
             b_ci = bb.coefficient_cis.get(feature, {})
             bi_ci = bi.coefficient_cis.get(feature, {})
             if b_ci and bi_ci:
-                b_str = f"${b_ci['point']:,.0f} [${b_ci['ci_low']:,.0f}, ${b_ci['ci_high']:,.0f}]"
-                bi_str = f"${bi_ci['point']:,.0f} [${bi_ci['ci_low']:,.0f}, ${bi_ci['ci_high']:,.0f}]"
+                b_str = f"{b_ci['point']:.4f} [{b_ci['ci_low']:.4f}, {b_ci['ci_high']:.4f}]"
+                bi_str = f"{bi_ci['point']:.4f} [{bi_ci['ci_low']:.4f}, {bi_ci['ci_high']:.4f}]"
                 handle.write(f"| {feature} | {b_str} | {bi_str} |\n")
         handle.write("\n")
         
         handle.write(f"### Linear Model R² (Test Set)\n\n")
-        handle.write(f"- Baseline: R² = {bb.r2:.4f}\n")
-        handle.write(f"- Biased: R² = {bi.r2:.4f}\n\n")
+        handle.write(f"- Baseline (log1p spend): R² = {bb.r2:.4f}\n")
+        handle.write(f"- Biased (log1p spend): R² = {bi.r2:.4f}\n\n")
     
     # Bootstrap results for GBDT base model
     if inputs.bootstrap_results:
@@ -387,12 +411,12 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
     handle.write("the disparity), we use linear regression to *measure* the urban coefficient:\n\n")
     handle.write("```\n")
     handle.write(
-        "spend ~ age + gender + income + bmi + smoker + alcohol_use + hypertension + chf + urban\n"
+        "log1p(spend) ~ age + gender + income + bmi + smoker + alcohol_use + hypertension + chf + urban\n"
     )
     handle.write("```\n\n")
     handle.write("The urban coefficient represents the average spending difference between urban and\n")
-    handle.write("rural patients, controlling for other factors. By comparing this coefficient across\n")
-    handle.write("datasets, we can quantify the access disparity introduced by the bias.\n\n")
+    handle.write("rural patients on the log1p scale, controlling for other factors. By comparing this\n")
+    handle.write("coefficient across datasets, we can quantify the access disparity introduced by the bias.\n\n")
     handle.write("### Key Findings\n\n")
     handle.write("1. **The urban coefficient measures disparity, not need**: A positive coefficient means\n")
     handle.write("   urban patients spend more (controlling for demographics), indicating rural underutilization.\n\n")

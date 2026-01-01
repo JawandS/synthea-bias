@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Collection, Dict, Iterable, List, Sequence, Tuple, TYPE_CHECKING
 
@@ -86,20 +87,27 @@ def analyze_models(
     biased_model: Any,
     sleep_disorder_code: str,
     sleep_apnea_codes: Collection[str],
+    log_spend: bool = False,
 ) -> AnalysisResults:
     """Compute evaluation metrics, feature importances, and population stats."""
+    def _to_raw(preds: Iterable[float]) -> List[float]:
+        pred_list = list(preds)
+        if not log_spend:
+            return pred_list
+        return [max(math.expm1(value), 0.0) for value in pred_list]
+
     baseline_summary = summarize_dataset(baseline)
     biased_summary = summarize_dataset(biased)
 
-    baseline_test_preds = baseline_model.predict(split_baseline.X_test)
-    biased_test_preds = biased_model.predict(split_biased.X_test)
+    baseline_test_preds = _to_raw(baseline_model.predict(split_baseline.X_test))
+    biased_test_preds = _to_raw(biased_model.predict(split_biased.X_test))
 
     baseline_test_metrics = evaluate_predictions(split_baseline.y_test, baseline_test_preds)
     biased_test_metrics = evaluate_predictions(split_biased.y_test, biased_test_preds)
 
     # Cross-dataset generalization checks.
-    biased_on_baseline_preds = biased_model.predict(split_baseline.X_test)
-    baseline_on_biased_preds = baseline_model.predict(split_biased.X_test)
+    biased_on_baseline_preds = _to_raw(biased_model.predict(split_baseline.X_test))
+    baseline_on_biased_preds = _to_raw(baseline_model.predict(split_biased.X_test))
 
     biased_on_baseline_metrics = evaluate_predictions(split_baseline.y_test, biased_on_baseline_preds)
     baseline_on_biased_metrics = evaluate_predictions(split_biased.y_test, baseline_on_biased_preds)
