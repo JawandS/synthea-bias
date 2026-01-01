@@ -55,11 +55,28 @@ def summarize_dataset(dataset: Dataset) -> Dict[str, float]:
     total_spend = sum(dataset.y)
     mean_spend = total_spend / n if n else 0.0
     nonzero = sum(1 for value in dataset.y if value > 0)
+    values_sorted = sorted(dataset.y)
+    nonzero_values = [value for value in values_sorted if value > 0]
+
+    def _percentile(values: List[float], pct: float) -> float:
+        if not values:
+            return 0.0
+        k = (len(values) - 1) * pct
+        f = int(math.floor(k))
+        c = int(math.ceil(k))
+        if f == c:
+            return values[f]
+        return values[f] + (values[c] - values[f]) * (k - f)
+
     return {
         "n": n,
         "total_spend": total_spend,
         "mean_spend": mean_spend,
+        "nonzero_count": nonzero,
         "nonzero_rate": nonzero / n if n else 0.0,
+        "nonzero_mean": total_spend / nonzero if nonzero else 0.0,
+        "median_spend": _percentile(values_sorted, 0.5),
+        "p90_spend": _percentile(values_sorted, 0.9),
     }
 
 

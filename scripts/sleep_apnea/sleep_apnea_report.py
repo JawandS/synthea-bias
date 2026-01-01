@@ -60,6 +60,13 @@ def format_pct(value: float) -> str:
     return f"{value * 100:.2f}%"
 
 
+def format_rel(value: float) -> str:
+    """Format a relative error percentage, guarding against NaN."""
+    if value is None or not math.isfinite(value):
+        return "n/a"
+    return f"{value * 100:+.2f}%"
+
+
 def write_report(output_path: Path, inputs: ReportInputs) -> None:
     """Write a markdown report comparing baseline and biased model performance."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +93,8 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
         handle.write(f"| Biased dataset | `{inputs.biased_csv_dir}` |\n")
         handle.write(f"| Bootstrap iterations | {inputs.n_bootstrap} |\n")
         handle.write(f"| Permutation iterations | {inputs.n_permutations} |\n")
+        handle.write("| Target transform | log1p(spend) |\n")
+        handle.write("| Metrics scale | dollars (back-transformed) |\n")
         handle.write("\n")
 
         handle.write("## Population Summary\n\n")
@@ -106,12 +115,25 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
             handle.write(f"> ℹ️ Urban/rural lookup missing: baseline {baseline_population['missing_urban']}, biased {biased_population['missing_urban']}\n\n")
 
         handle.write("## Spend Distribution\n\n")
+        handle.write("| Metric | Baseline | Biased |\n")
+        handle.write("| --- | ---: | ---: |\n")
+        handle.write(
+            f"| Median spend | {format_currency(analysis.baseline_summary['median_spend'])} | "
+            f"{format_currency(analysis.biased_summary['median_spend'])} |\n"
+        )
+        handle.write(
+            f"| 90th percentile spend | {format_currency(analysis.baseline_summary['p90_spend'])} | "
+            f"{format_currency(analysis.biased_summary['p90_spend'])} |\n"
+        )
+        handle.write(
+            f"| Mean spend (nonzero) | {format_currency(analysis.baseline_summary['nonzero_mean'])} | "
+            f"{format_currency(analysis.biased_summary['nonzero_mean'])} |\n"
+        )
+        handle.write("\n")
 
         handle.write("## Dataset Summary\n")
         handle.write("| Metric | Baseline | Biased |\n")
         handle.write("| --- | ---: | ---: |\n")
-        for label, summary in [("Baseline", analysis.baseline_summary), ("Biased", analysis.biased_summary)]:
-            pass  # Will build rows below
         handle.write(f"| Sample size | {analysis.baseline_summary['n']:,} | {analysis.biased_summary['n']:,} |\n")
         handle.write(f"| Mean spend | {format_currency(analysis.baseline_summary['mean_spend'])} | {format_currency(analysis.biased_summary['mean_spend'])} |\n")
         handle.write(f"| Nonzero rate | {analysis.baseline_summary['nonzero_rate'] * 100:.1f}% | {analysis.biased_summary['nonzero_rate'] * 100:.1f}% |\n")
@@ -169,13 +191,12 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
         handle.write(
             f"| Baseline | {format_currency(analysis.baseline_bias['mean_pred'])} | "
             f"{format_currency(analysis.baseline_bias['mean_true'])} | "
-            f"{format_currency(analysis.baseline_bias['diff'])} | - |\n"
+            f"{format_currency(analysis.baseline_bias['diff'])} | {format_rel(analysis.baseline_bias['rel'])} |\n"
         )
-        rel_pct = analysis.biased_bias['rel'] * 100
         handle.write(
             f"| Biased | {format_currency(analysis.biased_bias['mean_pred'])} | "
             f"{format_currency(analysis.biased_bias['mean_true'])} | "
-            f"{format_currency(analysis.biased_bias['diff'])} | {rel_pct:+.2f}% |\n"
+            f"{format_currency(analysis.biased_bias['diff'])} | {format_rel(analysis.biased_bias['rel'])} |\n"
         )
         handle.write("\n")
 
@@ -200,12 +221,16 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
     # New bias quantification section using linear regression
     if inputs.bias_baseline is not None and inputs.bias_biased is not None:
         handle.write("## Geographic Disparity (Linear Regression)\n\n")
-        handle.write("The urban coefficient measures spending difference between urban and rural patients\\n")
-        handle.write("after controlling for clinical factors. See README.md for methodology.\\n\\n")
+        handle.write(
+            "The urban coefficient measures the percent difference in log1p spend between urban and\n"
+        )
+        handle.write(
+            "rural patients after controlling for clinical factors. See README.md for methodology.\n\n"
+        )
         
-        handle.write("### Urban Effect Summary\\n\\n")
-        handle.write("| Dataset | Urban Effect (%) | 95% CI | p-value | Significant? |\\n")
-        handle.write("| --- | ---: | --- | ---: | :---: |\\n")
+        handle.write("### Urban Effect Summary\n\n")
+        handle.write("| Dataset | Urban Effect (%) | 95% CI | p-value | Significant? |\n")
+        handle.write("| --- | ---: | --- | ---: | :---: |\n")
         
         bb = inputs.bias_baseline
         bi = inputs.bias_biased
@@ -219,69 +244,69 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
         bi_ci = (math.expm1(bi.urban_ci_low) * 100, math.expm1(bi.urban_ci_high) * 100)
         handle.write(
             f"| Baseline | {bb_effect:+.2f}% | "
-            f"[{bb_ci[0]:+.2f}%, {bb_ci[1]:+.2f}%] | {bb.urban_pvalue:.4f} | {sig_b} |\\n"
+            f"[{bb_ci[0]:+.2f}%, {bb_ci[1]:+.2f}%] | {bb.urban_pvalue:.4f} | {sig_b} |\n"
         )
         handle.write(
             f"| Biased | {bi_effect:+.2f}% | "
-            f"[{bi_ci[0]:+.2f}%, {bi_ci[1]:+.2f}%] | {bi.urban_pvalue:.4f} | {sig_bi} |\\n"
+            f"[{bi_ci[0]:+.2f}%, {bi_ci[1]:+.2f}%] | {bi.urban_pvalue:.4f} | {sig_bi} |\n"
         )
-        handle.write("\\n")
+        handle.write("\n")
         
         diff = bi_effect - bb_effect
-        handle.write("### Key Finding\\n\\n")
-        handle.write(f"| Metric | Value |\\n")
-        handle.write(f"| --- | ---: |\\n")
-        handle.write(f"| Baseline urban effect | {bb_effect:+.2f}% |\\n")
-        handle.write(f"| Biased urban effect | {bi_effect:+.2f}% |\\n")
-        handle.write(f"| **Bias-induced disparity** | **{diff:+.2f}%** |\\n")
-        handle.write(f"| Baseline R² | {bb.r2:.4f} |\\n")
-        handle.write(f"| Biased R² | {bi.r2:.4f} |\\n")
-        handle.write("\\n")
+        handle.write("### Key Finding\n\n")
+        handle.write(f"| Metric | Value |\n")
+        handle.write(f"| --- | ---: |\n")
+        handle.write(f"| Baseline urban effect | {bb_effect:+.2f}% |\n")
+        handle.write(f"| Biased urban effect | {bi_effect:+.2f}% |\n")
+        handle.write(f"| **Bias-induced disparity** | **{diff:+.2f}%** |\n")
+        handle.write(f"| Baseline R² (log1p) | {bb.r2:.4f} |\n")
+        handle.write(f"| Biased R² (log1p) | {bi.r2:.4f} |\n")
+        handle.write("\n")
         
         if abs(diff) > 1:
             if diff < 0:
                 handle.write(
                     f"> The biased dataset shows rural patients spending **{abs(diff):.1f}% less** "
-                    f"than in baseline, indicating access disparity from rural dropout.\\n\\n"
+                    f"than in baseline, indicating access disparity from rural dropout.\n\n"
                 )
             else:
                 handle.write(
                     f"> The biased dataset shows rural patients spending **{diff:.1f}% more** "
-                    f"than in baseline, which is unexpected.\\n\\n"
+                    f"than in baseline, which is unexpected.\n\n"
                 )
         
-        handle.write("### Standardized Coefficients\\n\\n")
-        handle.write("| Feature | Baseline | Biased |\\n")
-        handle.write("| --- | ---: | ---: |\\n")
+        handle.write("### Standardized Coefficients\n\n")
+        handle.write("| Feature | Baseline | Biased |\n")
+        handle.write("| --- | ---: | ---: |\n")
         
         for feature in inputs.feature_names_urban:
             b_val = bb.standardized_coefficients.get(feature, 0.0)
             bi_val = bi.standardized_coefficients.get(feature, 0.0)
-            handle.write(f"| {feature} | {b_val:,.2f} | {bi_val:,.2f} |\\n")
-        handle.write("\\n")
+            handle.write(f"| {feature} | {b_val:,.2f} | {bi_val:,.2f} |\n")
+        handle.write("\n")
     
     # Bootstrap results for GBDT base model
     if inputs.bootstrap_results:
-        handle.write("## Statistical Confidence (Bootstrap)\\n\\n")
+        handle.write("## Statistical Confidence (Bootstrap)\n\n")
         
         bootstrap = inputs.bootstrap_results
-        handle.write("| Evaluation | MAE [95% CI] | R² [95% CI] |\\n")
-        handle.write("| --- | --- | --- |\\n")
+        handle.write("| Evaluation | MAE [95% CI] | R² [95% CI] |\n")
+        handle.write("| --- | --- | --- |\n")
         
         if "base_baseline_in" in bootstrap:
             m = bootstrap["base_baseline_in"]
-            handle.write(f"| Baseline → Baseline | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\\n")
+            handle.write(f"| Baseline → Baseline | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\n")
         if "base_biased_in" in bootstrap:
             m = bootstrap["base_biased_in"]
-            handle.write(f"| Biased → Biased | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\\n")
+            handle.write(f"| Biased → Biased | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\n")
         if "base_biased_on_baseline" in bootstrap:
             m = bootstrap["base_biased_on_baseline"]
-            handle.write(f"| Biased → Baseline | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\\n")
+            handle.write(f"| Biased → Baseline | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\n")
         if "base_baseline_on_biased" in bootstrap:
             m = bootstrap["base_baseline_on_biased"]
-            handle.write(f"| Baseline → Biased | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\\n")
-        handle.write("\\n")
-        handle.write(f"*{inputs.n_bootstrap} bootstrap iterations, 95% CIs*\\n\\n")
+            handle.write(f"| Baseline → Biased | {_format_ci(m['mae'])} | {_format_ci(m['r2'])} |\n")
+        handle.write("\n")
+        handle.write(f"*{inputs.n_bootstrap} bootstrap iterations, 95% CIs*\n\n")
     
     # Permutation tests
     if inputs.permutation_results:
@@ -289,6 +314,9 @@ def _write_extended_analysis(handle, inputs: ReportInputs) -> None:
         if "base_cross_pop" in perm:
             p = perm["base_cross_pop"]
             sig = "**significant**" if p["p_value"] < 0.05 else "not significant"
-            handle.write("## Hypothesis Test (Permutation)\\n\\n")
-            handle.write(f"Cross-population MAE difference: {p['observed_diff']:.2f} (p = {p['p_value']:.4f}, {sig})\\n\\n")
-            handle.write(f"*{inputs.n_permutations} permutations, two-sided test*\\n")
+            handle.write("## Hypothesis Test (Permutation)\n\n")
+            handle.write(
+                f"Cross-population MAE difference: {p['observed_diff']:.2f} "
+                f"(p = {p['p_value']:.4f}, {sig})\n\n"
+            )
+            handle.write(f"*{inputs.n_permutations} permutations, two-sided test*\n")
