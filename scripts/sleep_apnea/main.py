@@ -775,6 +775,12 @@ def main() -> int:
             return callback
 
         baseline = build_dataset("baseline", args.baseline, make_load_callback(load_task, "Baseline"))
+        if not baseline.patient_ids:
+            console.print(
+                f"[red]No patients found in {baseline.csv_dir}. "
+                "Check that patients.csv has rows and the --baseline path is correct.[/red]"
+            )
+            return 1
         progress.update(load_task, completed=estimated_rows_per_dataset)
 
         load_task2 = progress.add_task(
@@ -782,6 +788,12 @@ def main() -> int:
             total=estimated_rows_per_dataset
         )
         biased = build_dataset("biased", args.biased, make_load_callback(load_task2, "Biased"))
+        if not biased.patient_ids:
+            console.print(
+                f"[red]No patients found in {biased.csv_dir}. "
+                "Check that patients.csv has rows and the --biased path is correct.[/red]"
+            )
+            return 1
         progress.update(load_task2, completed=estimated_rows_per_dataset)
 
         # Show dataset summary
