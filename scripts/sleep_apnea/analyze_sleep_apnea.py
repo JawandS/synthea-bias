@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Collection, Dict, Iterable, List, Sequence, Tuple, TYPE_CHECKING
+from typing import Any, Collection, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
-from utils import compute_population_stats, load_sdoh_urban_map
+from utils import compute_population_stats, load_condition_patients, load_sdoh_urban_map
 
 if TYPE_CHECKING:
     from scripts.sleep_apnea.main import Dataset, Split
@@ -30,6 +30,8 @@ class AnalysisResults:
     biased_population: Dict[str, float]
     baseline_split_sizes: Tuple[int, int, int]
     biased_split_sizes: Tuple[int, int, int]
+    baseline_nonzero: Dict[str, Dict[str, float]]
+    biased_nonzero: Dict[str, Dict[str, float]]
 
 
 def evaluate_predictions(y_true: List[float], y_pred: Iterable[float]) -> Dict[str, float]:
@@ -107,6 +109,20 @@ def analyze_models(
     log_spend: bool = False,
 ) -> AnalysisResults:
     """Compute evaluation metrics, feature importances, and population stats."""
+    def _nonzero_stats(dataset: Dataset, cohort_ids: Optional[set] = None) -> Dict[str, float]:
+        spend_by_id = dict(zip(dataset.patient_ids, dataset.y))
+        if cohort_ids is None:
+            values = list(spend_by_id.values())
+        else:
+            values = [spend_by_id[pid] for pid in cohort_ids if pid in spend_by_id]
+        total = len(values)
+        nonzero = sum(1 for value in values if value > 0)
+        return {
+            "total": total,
+            "nonzero": nonzero,
+            "rate": nonzero / total if total else 0.0,
+        }
+
     def _to_raw(preds: Iterable[float]) -> List[float]:
         pred_list = list(preds)
         if not log_spend:
@@ -151,6 +167,30 @@ def analyze_models(
         biased.csv_dir, urban_map, sleep_disorder_code, sleep_apnea_codes
     )
 
+    baseline_sleep_disorder = load_condition_patients(
+        baseline.csv_dir / "conditions.csv", [sleep_disorder_code]
+    )
+    biased_sleep_disorder = load_condition_patients(
+        biased.csv_dir / "conditions.csv", [sleep_disorder_code]
+    )
+    baseline_sleep_apnea = load_condition_patients(
+        baseline.csv_dir / "conditions.csv", sleep_apnea_codes
+    )
+    biased_sleep_apnea = load_condition_patients(
+        biased.csv_dir / "conditions.csv", sleep_apnea_codes
+    )
+
+    baseline_nonzero = {
+        "overall": _nonzero_stats(baseline),
+        "sleep_disorder": _nonzero_stats(baseline, baseline_sleep_disorder),
+        "sleep_apnea": _nonzero_stats(baseline, baseline_sleep_apnea),
+    }
+    biased_nonzero = {
+        "overall": _nonzero_stats(biased),
+        "sleep_disorder": _nonzero_stats(biased, biased_sleep_disorder),
+        "sleep_apnea": _nonzero_stats(biased, biased_sleep_apnea),
+    }
+
     importance_table = build_importance_table(
         baseline_model, biased_model, baseline.feature_names
     )
@@ -177,4 +217,6 @@ def analyze_models(
             len(split_biased.y_val),
             len(split_biased.y_test),
         ),
+        baseline_nonzero=baseline_nonzero,
+        biased_nonzero=biased_nonzero,
     )

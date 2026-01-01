@@ -67,6 +67,11 @@ def format_rel(value: float) -> str:
     return f"{value * 100:+.2f}%"
 
 
+def format_rate_count(stats: Dict[str, float]) -> str:
+    """Format a rate with nonzero/total counts."""
+    return f"{format_pct(stats['rate'])} ({stats['nonzero']}/{stats['total']})"
+
+
 def write_report(output_path: Path, inputs: ReportInputs) -> None:
     """Write a markdown report comparing baseline and biased model performance."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,6 +133,23 @@ def write_report(output_path: Path, inputs: ReportInputs) -> None:
         handle.write(
             f"| Mean spend (nonzero) | {format_currency(analysis.baseline_summary['nonzero_mean'])} | "
             f"{format_currency(analysis.biased_summary['nonzero_mean'])} |\n"
+        )
+        handle.write("\n")
+
+        handle.write("## Nonzero Spend Rate\n\n")
+        handle.write("| Cohort | Baseline | Biased |\n")
+        handle.write("| --- | ---: | ---: |\n")
+        handle.write(
+            f"| Overall | {format_rate_count(analysis.baseline_nonzero['overall'])} | "
+            f"{format_rate_count(analysis.biased_nonzero['overall'])} |\n"
+        )
+        handle.write(
+            f"| Sleep disorder cohort | {format_rate_count(analysis.baseline_nonzero['sleep_disorder'])} | "
+            f"{format_rate_count(analysis.biased_nonzero['sleep_disorder'])} |\n"
+        )
+        handle.write(
+            f"| Sleep apnea cohort | {format_rate_count(analysis.baseline_nonzero['sleep_apnea'])} | "
+            f"{format_rate_count(analysis.biased_nonzero['sleep_apnea'])} |\n"
         )
         handle.write("\n")
 
