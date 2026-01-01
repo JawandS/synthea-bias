@@ -6,7 +6,151 @@ import csv
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
-from typing import Callable, Collection, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Collection, Dict, Iterable, List, Optional, Sequence, Tuple
+
+PATIENTS_HEADERS = [
+    "Id",
+    "BIRTHDATE",
+    "DEATHDATE",
+    "SSN",
+    "DRIVERS",
+    "PASSPORT",
+    "PREFIX",
+    "FIRST",
+    "MIDDLE",
+    "LAST",
+    "SUFFIX",
+    "MAIDEN",
+    "MARITAL",
+    "RACE",
+    "ETHNICITY",
+    "GENDER",
+    "BIRTHPLACE",
+    "ADDRESS",
+    "CITY",
+    "STATE",
+    "COUNTY",
+    "FIPS",
+    "ZIP",
+    "LAT",
+    "LON",
+    "HEALTHCARE_EXPENSES",
+    "HEALTHCARE_COVERAGE",
+    "INCOME",
+]
+CONDITIONS_HEADERS = [
+    "START",
+    "STOP",
+    "PATIENT",
+    "ENCOUNTER",
+    "SYSTEM",
+    "CODE",
+    "DESCRIPTION",
+]
+OBSERVATIONS_HEADERS = [
+    "DATE",
+    "PATIENT",
+    "ENCOUNTER",
+    "CATEGORY",
+    "CODE",
+    "DESCRIPTION",
+    "VALUE",
+    "UNITS",
+    "TYPE",
+]
+PROCEDURES_HEADERS = [
+    "START",
+    "STOP",
+    "PATIENT",
+    "ENCOUNTER",
+    "SYSTEM",
+    "CODE",
+    "DESCRIPTION",
+    "BASE_COST",
+    "REASONCODE",
+    "REASONDESCRIPTION",
+]
+ENCOUNTERS_HEADERS = [
+    "Id",
+    "START",
+    "STOP",
+    "PATIENT",
+    "ORGANIZATION",
+    "PROVIDER",
+    "PAYER",
+    "ENCOUNTERCLASS",
+    "CODE",
+    "DESCRIPTION",
+    "BASE_ENCOUNTER_COST",
+    "TOTAL_CLAIM_COST",
+    "PAYER_COVERAGE",
+    "REASONCODE",
+    "REASONDESCRIPTION",
+]
+MEDICATIONS_HEADERS = [
+    "START",
+    "STOP",
+    "PATIENT",
+    "PAYER",
+    "ENCOUNTER",
+    "CODE",
+    "DESCRIPTION",
+    "BASE_COST",
+    "PAYER_COVERAGE",
+    "DISPENSES",
+    "TOTALCOST",
+    "REASONCODE",
+    "REASONDESCRIPTION",
+]
+DEVICES_HEADERS = [
+    "START",
+    "STOP",
+    "PATIENT",
+    "ENCOUNTER",
+    "CODE",
+    "DESCRIPTION",
+    "UDI",
+]
+SUPPLIES_HEADERS = [
+    "DATE",
+    "PATIENT",
+    "ENCOUNTER",
+    "CODE",
+    "DESCRIPTION",
+    "QUANTITY",
+]
+
+
+def _has_header(path: Path, expected_headers: Sequence[str]) -> bool:
+    """Return True if the first row looks like a header row."""
+    if not path.exists():
+        return False
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.reader(handle)
+        first_row = next(reader, None)
+    if not first_row:
+        return False
+    expected = {header.lower() for header in expected_headers}
+    first_vals = {value.strip().lower() for value in first_row}
+    return any(value in expected for value in first_vals)
+
+
+def iter_csv_rows(
+    path: Path,
+    expected_headers: Sequence[str],
+) -> Iterable[Tuple[Dict[str, str], Dict[str, str]]]:
+    """Yield CSV rows and a header map, supporting headerless Synthea exports."""
+    if not path.exists():
+        return
+    has_header = _has_header(path, expected_headers)
+    with path.open(newline="", encoding="utf-8") as handle:
+        if has_header:
+            reader = csv.DictReader(handle)
+        else:
+            reader = csv.DictReader(handle, fieldnames=expected_headers)
+        header_map = make_header_map(reader.fieldnames)
+        for row in reader:
+            yield row, header_map
 
 
 def find_csv_dir(path_str: str) -> Path:
@@ -70,15 +214,12 @@ def find_dataset_end_date(csv_dir: Path) -> Optional[date]:
         return None
     
     latest: Optional[date] = None
-    with patients_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            for field in ["deathdate", "birthdate"]:
-                val = get_value(row, header_map, [field])
-                parsed = parse_date(val)
-                if parsed and (latest is None or parsed > latest):
-                    latest = parsed
+    for row, header_map in iter_csv_rows(patients_path, PATIENTS_HEADERS):
+        for field in ["deathdate", "birthdate"]:
+            val = get_value(row, header_map, [field])
+            parsed = parse_date(val)
+            if parsed and (latest is None or parsed > latest):
+                latest = parsed
     return latest
 
 
@@ -146,20 +287,17 @@ def load_patient_urban_flags(patients_path: Path) -> Dict[str, Optional[float]]:
     if not patients_path.exists():
         return patient_urban
     
-    with patients_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            patient_id = get_value(row, header_map, ["id"])
-            if not patient_id:
-                continue
-            state = (get_value(row, header_map, ["state"]) or "").strip().upper()
-            county = (get_value(row, header_map, ["county"]) or "").strip().upper()
-            key = (state, county)
-            if state and county and key in urban_map:
-                patient_urban[patient_id] = float(urban_map[key])
-            else:
-                patient_urban[patient_id] = None
+    for row, header_map in iter_csv_rows(patients_path, PATIENTS_HEADERS):
+        patient_id = get_value(row, header_map, ["id"])
+        if not patient_id:
+            continue
+        state = (get_value(row, header_map, ["state"]) or "").strip().upper()
+        county = (get_value(row, header_map, ["county"]) or "").strip().upper()
+        key = (state, county)
+        if state and county and key in urban_map:
+            patient_urban[patient_id] = float(urban_map[key])
+        else:
+            patient_urban[patient_id] = None
     return patient_urban
 
 
@@ -170,33 +308,27 @@ def load_condition_flags(
     """Return a set of patients with any condition code and the latest date seen."""
     patients = set()
     max_date = None
-    with conditions_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            code = get_value(row, header_map, ["code"])
-            patient_id = get_value(row, header_map, ["patient"])
-            start_date = parse_date(get_value(row, header_map, ["start", "date"]))
-            if start_date and (max_date is None or start_date > max_date):
-                max_date = start_date
-            if patient_id and code in codes:
-                patients.add(patient_id)
+    for row, header_map in iter_csv_rows(conditions_path, CONDITIONS_HEADERS):
+        code = get_value(row, header_map, ["code"])
+        patient_id = get_value(row, header_map, ["patient"])
+        start_date = parse_date(get_value(row, header_map, ["start", "date"]))
+        if start_date and (max_date is None or start_date > max_date):
+            max_date = start_date
+        if patient_id and code in codes:
+            patients.add(patient_id)
     return patients, max_date
 
 
 def load_condition_patients(conditions_path: Path, codes: Collection[str]) -> set:
     """Return a set of patients with any condition code in the list."""
     patients = set()
-    with conditions_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            code = get_value(row, header_map, ["code"])
-            if code not in codes:
-                continue
-            patient_id = get_value(row, header_map, ["patient"])
-            if patient_id:
-                patients.add(patient_id)
+    for row, header_map in iter_csv_rows(conditions_path, CONDITIONS_HEADERS):
+        code = get_value(row, header_map, ["code"])
+        if code not in codes:
+            continue
+        patient_id = get_value(row, header_map, ["patient"])
+        if patient_id:
+            patients.add(patient_id)
     return patients
 
 
@@ -208,25 +340,22 @@ def load_latest_bmi(observations_path: Path, bmi_code: str) -> Dict[str, float]:
     if not observations_path.exists():
         return bmi_by_patient
 
-    with observations_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            code = get_value(row, header_map, ["code"])
-            if code != bmi_code:
-                continue
-            patient_id = get_value(row, header_map, ["patient"])
-            if not patient_id:
-                continue
-            value = parse_float(get_value(row, header_map, ["value"]))
-            if value is None:
-                continue
-            obs_date = parse_date(get_value(row, header_map, ["date"]))
-            if obs_date is None:
-                continue
-            if patient_id not in date_by_patient or obs_date > date_by_patient[patient_id]:
-                date_by_patient[patient_id] = obs_date
-                bmi_by_patient[patient_id] = value
+    for row, header_map in iter_csv_rows(observations_path, OBSERVATIONS_HEADERS):
+        code = get_value(row, header_map, ["code"])
+        if code != bmi_code:
+            continue
+        patient_id = get_value(row, header_map, ["patient"])
+        if not patient_id:
+            continue
+        value = parse_float(get_value(row, header_map, ["value"]))
+        if value is None:
+            continue
+        obs_date = parse_date(get_value(row, header_map, ["date"]))
+        if obs_date is None:
+            continue
+        if patient_id not in date_by_patient or obs_date > date_by_patient[patient_id]:
+            date_by_patient[patient_id] = obs_date
+            bmi_by_patient[patient_id] = value
     return bmi_by_patient
 
 
@@ -246,29 +375,26 @@ def load_latest_smoking_status(
     smoker_values_norm = {value.strip().lower() for value in smoker_values}
     nonsmoker_values_norm = {value.strip().lower() for value in nonsmoker_values}
 
-    with observations_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            code = get_value(row, header_map, ["code"])
-            if code != status_code:
-                continue
-            patient_id = get_value(row, header_map, ["patient"])
-            if not patient_id:
-                continue
-            obs_date = parse_date(get_value(row, header_map, ["date"]))
-            if obs_date is None:
-                continue
-            value = (get_value(row, header_map, ["value"]) or "").strip().lower()
-            if value in smoker_values_norm:
-                status = 1.0
-            elif value in nonsmoker_values_norm:
-                status = 0.0
-            else:
-                continue
-            if patient_id not in date_by_patient or obs_date > date_by_patient[patient_id]:
-                date_by_patient[patient_id] = obs_date
-                status_by_patient[patient_id] = status
+    for row, header_map in iter_csv_rows(observations_path, OBSERVATIONS_HEADERS):
+        code = get_value(row, header_map, ["code"])
+        if code != status_code:
+            continue
+        patient_id = get_value(row, header_map, ["patient"])
+        if not patient_id:
+            continue
+        obs_date = parse_date(get_value(row, header_map, ["date"]))
+        if obs_date is None:
+            continue
+        value = (get_value(row, header_map, ["value"]) or "").strip().lower()
+        if value in smoker_values_norm:
+            status = 1.0
+        elif value in nonsmoker_values_norm:
+            status = 0.0
+        else:
+            continue
+        if patient_id not in date_by_patient or obs_date > date_by_patient[patient_id]:
+            date_by_patient[patient_id] = obs_date
+            status_by_patient[patient_id] = status
     return status_by_patient
 
 
@@ -283,16 +409,13 @@ def compute_population_stats(
     conditions_path = csv_dir / "conditions.csv"
 
     patient_locations: Dict[str, Tuple[str, str]] = {}
-    with patients_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            patient_id = get_value(row, header_map, ["id"])
-            if not patient_id:
-                continue
-            state = (get_value(row, header_map, ["state"]) or "").strip().upper()
-            county = (get_value(row, header_map, ["county"]) or "").strip().upper()
-            patient_locations[patient_id] = (state, county)
+    for row, header_map in iter_csv_rows(patients_path, PATIENTS_HEADERS):
+        patient_id = get_value(row, header_map, ["id"])
+        if not patient_id:
+            continue
+        state = (get_value(row, header_map, ["state"]) or "").strip().upper()
+        county = (get_value(row, header_map, ["county"]) or "").strip().upper()
+        patient_locations[patient_id] = (state, county)
 
     total = len(patient_locations)
     urban = 0
@@ -346,75 +469,66 @@ def load_sleep_spend(
     encounters_path = csv_dir / "encounters.csv"
     if encounters_path.exists():
         row_count = 0
-        with encounters_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 100000 == 0:
-                    progress_callback("encounters.csv", row_count)
-                code = get_value(row, header_map, ["code"])
-                reason_code = get_value(row, header_map, ["reasoncode"])
-                if reason_code not in sleep_reason_codes:
-                    continue
-                if code and code not in sleep_encounter_codes:
-                    continue
-                encounter_id = get_value(row, header_map, ["id"])
-                if encounter_id:
-                    sleep_encounters.add(encounter_id)
-                patient_id = get_value(row, header_map, ["patient"])
-                cost = parse_float(get_value(row, header_map, ["total_claim_cost"]))
-                if cost is None:
-                    cost = parse_float(get_value(row, header_map, ["base_encounter_cost"]))
-                if patient_id and cost is not None:
-                    spend[patient_id] += cost
+        for row, header_map in iter_csv_rows(encounters_path, ENCOUNTERS_HEADERS):
+            row_count += 1
+            if progress_callback and row_count % 100000 == 0:
+                progress_callback("encounters.csv", row_count)
+            code = get_value(row, header_map, ["code"])
+            reason_code = get_value(row, header_map, ["reasoncode"])
+            if reason_code not in sleep_reason_codes:
+                continue
+            if code and code not in sleep_encounter_codes:
+                continue
+            encounter_id = get_value(row, header_map, ["id"])
+            if encounter_id:
+                sleep_encounters.add(encounter_id)
+            patient_id = get_value(row, header_map, ["patient"])
+            cost = parse_float(get_value(row, header_map, ["total_claim_cost"]))
+            if cost is None:
+                cost = parse_float(get_value(row, header_map, ["base_encounter_cost"]))
+            if patient_id and cost is not None:
+                spend[patient_id] += cost
         if progress_callback:
             progress_callback("encounters.csv", row_count)
 
     procedures_path = csv_dir / "procedures.csv"
     if procedures_path.exists():
         row_count = 0
-        with procedures_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 100000 == 0:
-                    progress_callback("procedures.csv", row_count)
-                code = get_value(row, header_map, ["code"])
-                reason_code = get_value(row, header_map, ["reasoncode"])
-                encounter_id = get_value(row, header_map, ["encounter"])
-                if (
-                    code not in sleep_procedure_codes
-                    and reason_code not in sleep_reason_codes
-                    and encounter_id not in sleep_encounters
-                ):
-                    continue
-                patient_id = get_value(row, header_map, ["patient"])
-                cost = parse_float(get_value(row, header_map, ["base_cost"]))
-                if patient_id and cost is not None:
-                    spend[patient_id] += cost
+        for row, header_map in iter_csv_rows(procedures_path, PROCEDURES_HEADERS):
+            row_count += 1
+            if progress_callback and row_count % 100000 == 0:
+                progress_callback("procedures.csv", row_count)
+            code = get_value(row, header_map, ["code"])
+            reason_code = get_value(row, header_map, ["reasoncode"])
+            encounter_id = get_value(row, header_map, ["encounter"])
+            if (
+                code not in sleep_procedure_codes
+                and reason_code not in sleep_reason_codes
+                and encounter_id not in sleep_encounters
+            ):
+                continue
+            patient_id = get_value(row, header_map, ["patient"])
+            cost = parse_float(get_value(row, header_map, ["base_cost"]))
+            if patient_id and cost is not None:
+                spend[patient_id] += cost
         if progress_callback:
             progress_callback("procedures.csv", row_count)
 
     medications_path = csv_dir / "medications.csv"
     if medications_path.exists():
         row_count = 0
-        with medications_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 100000 == 0:
-                    progress_callback("medications.csv", row_count)
-                reason_code = get_value(row, header_map, ["reasoncode"])
-                encounter_id = get_value(row, header_map, ["encounter"])
-                if reason_code not in sleep_reason_codes and encounter_id not in sleep_encounters:
-                    continue
-                patient_id = get_value(row, header_map, ["patient"])
-                cost = parse_float(get_value(row, header_map, ["totalcost"]))
-                if patient_id and cost is not None:
-                    spend[patient_id] += cost
+        for row, header_map in iter_csv_rows(medications_path, MEDICATIONS_HEADERS):
+            row_count += 1
+            if progress_callback and row_count % 100000 == 0:
+                progress_callback("medications.csv", row_count)
+            reason_code = get_value(row, header_map, ["reasoncode"])
+            encounter_id = get_value(row, header_map, ["encounter"])
+            if reason_code not in sleep_reason_codes and encounter_id not in sleep_encounters:
+                continue
+            patient_id = get_value(row, header_map, ["patient"])
+            cost = parse_float(get_value(row, header_map, ["totalcost"]))
+            if patient_id and cost is not None:
+                spend[patient_id] += cost
         if progress_callback:
             progress_callback("medications.csv", row_count)
 
@@ -425,51 +539,45 @@ def load_sleep_spend(
     devices_path = csv_dir / "devices.csv"
     if devices_path.exists():
         row_count = 0
-        with devices_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 50000 == 0:
-                    progress_callback("devices.csv", row_count)
-                code = get_value(row, header_map, ["code"])
-                if not code:
-                    continue
-                encounter_id = get_value(row, header_map, ["encounter"])
-                # Allow device/supply costs if directly sleep-related or tied to a sleep encounter.
-                if code not in sleep_equipment_codes and encounter_id not in sleep_encounters:
-                    continue
-                cost = costs.get(code)
-                if cost is None:
-                    continue
-                patient_id = get_value(row, header_map, ["patient"])
-                if patient_id:
-                    spend[patient_id] += cost
+        for row, header_map in iter_csv_rows(devices_path, DEVICES_HEADERS):
+            row_count += 1
+            if progress_callback and row_count % 50000 == 0:
+                progress_callback("devices.csv", row_count)
+            code = get_value(row, header_map, ["code"])
+            if not code:
+                continue
+            encounter_id = get_value(row, header_map, ["encounter"])
+            # Allow device/supply costs if directly sleep-related or tied to a sleep encounter.
+            if code not in sleep_equipment_codes and encounter_id not in sleep_encounters:
+                continue
+            cost = costs.get(code)
+            if cost is None:
+                continue
+            patient_id = get_value(row, header_map, ["patient"])
+            if patient_id:
+                spend[patient_id] += cost
         if progress_callback:
             progress_callback("devices.csv", row_count)
 
     supplies_path = csv_dir / "supplies.csv"
     if supplies_path.exists():
         row_count = 0
-        with supplies_path.open(newline="", encoding="utf-8") as handle:
-            reader = csv.DictReader(handle)
-            header_map = make_header_map(reader.fieldnames)
-            for row in reader:
-                row_count += 1
-                if progress_callback and row_count % 50000 == 0:
-                    progress_callback("supplies.csv", row_count)
-                code = get_value(row, header_map, ["code"])
-                if not code:
-                    continue
-                encounter_id = get_value(row, header_map, ["encounter"])
-                if code not in sleep_equipment_codes and encounter_id not in sleep_encounters:
-                    continue
-                cost = costs.get(code)
-                if cost is None:
-                    continue
-                patient_id = get_value(row, header_map, ["patient"])
-                if patient_id:
-                    spend[patient_id] += cost
+        for row, header_map in iter_csv_rows(supplies_path, SUPPLIES_HEADERS):
+            row_count += 1
+            if progress_callback and row_count % 50000 == 0:
+                progress_callback("supplies.csv", row_count)
+            code = get_value(row, header_map, ["code"])
+            if not code:
+                continue
+            encounter_id = get_value(row, header_map, ["encounter"])
+            if code not in sleep_equipment_codes and encounter_id not in sleep_encounters:
+                continue
+            cost = costs.get(code)
+            if cost is None:
+                continue
+            patient_id = get_value(row, header_map, ["patient"])
+            if patient_id:
+                spend[patient_id] += cost
         if progress_callback:
             progress_callback("supplies.csv", row_count)
 

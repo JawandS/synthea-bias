@@ -14,7 +14,6 @@ testing for cross-population hypothesis tests.
 """
 
 import argparse
-import csv
 import math
 import random
 from dataclasses import dataclass, field
@@ -49,12 +48,13 @@ from utils import (
     find_dataset_end_date,
     get_value,
     impute_missing,
+    iter_csv_rows,
     load_condition_patients,
     load_latest_bmi,
     load_latest_smoking_status,
     load_patient_urban_flags,
     load_sleep_spend,
-    make_header_map,
+    PATIENTS_HEADERS,
     parse_date,
     parse_float,
 )
@@ -211,47 +211,44 @@ def build_dataset(
     y: List[float] = []
     patient_ids: List[str] = []
 
-    with patients_path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        header_map = make_header_map(reader.fieldnames)
-        for row in reader:
-            patient_id = get_value(row, header_map, ["id"])
-            if not patient_id:
-                continue
+    for row, header_map in iter_csv_rows(patients_path, PATIENTS_HEADERS):
+        patient_id = get_value(row, header_map, ["id"])
+        if not patient_id:
+            continue
 
-            birthdate = parse_date(get_value(row, header_map, ["birthdate"]))
-            if birthdate is None:
+        birthdate = parse_date(get_value(row, header_map, ["birthdate"]))
+        if birthdate is None:
+            age_years = None
+        else:
+            age_years = (ref_date - birthdate).days / 365.25
+            if age_years < 0:
                 age_years = None
-            else:
-                age_years = (ref_date - birthdate).days / 365.25
-                if age_years < 0:
-                    age_years = None
 
-            gender = (get_value(row, header_map, ["gender"]) or "").strip().lower()
-            male = 1.0 if gender == "m" else 0.0
+        gender = (get_value(row, header_map, ["gender"]) or "").strip().lower()
+        male = 1.0 if gender == "m" else 0.0
 
-            income = parse_float(get_value(row, header_map, ["income"]))
+        income = parse_float(get_value(row, header_map, ["income"]))
 
-            bmi = bmi_by_patient.get(patient_id)
-            smoker = smoking_by_patient.get(patient_id)
-            alcohol_use = 1.0 if patient_id in alcohol_patients else 0.0
-            hypertension = 1.0 if patient_id in hypertension_patients else 0.0
-            chf = 1.0 if patient_id in chf_patients else 0.0
+        bmi = bmi_by_patient.get(patient_id)
+        smoker = smoking_by_patient.get(patient_id)
+        alcohol_use = 1.0 if patient_id in alcohol_patients else 0.0
+        hypertension = 1.0 if patient_id in hypertension_patients else 0.0
+        chf = 1.0 if patient_id in chf_patients else 0.0
 
-            features = [
-                age_years,
-                male,
-                income,
-                bmi,
-                smoker,
-                alcohol_use,
-                hypertension,
-                chf,
-            ]
+        features = [
+            age_years,
+            male,
+            income,
+            bmi,
+            smoker,
+            alcohol_use,
+            hypertension,
+            chf,
+        ]
 
-            X.append(features)
-            y.append(float(sleep_spend.get(patient_id, 0.0)))
-            patient_ids.append(patient_id)
+        X.append(features)
+        y.append(float(sleep_spend.get(patient_id, 0.0)))
+        patient_ids.append(patient_id)
 
     return Dataset(
         label=label,
