@@ -230,6 +230,48 @@ def load_latest_bmi(observations_path: Path, bmi_code: str) -> Dict[str, float]:
     return bmi_by_patient
 
 
+def load_latest_smoking_status(
+    observations_path: Path,
+    status_code: str,
+    smoker_values: Collection[str],
+    nonsmoker_values: Collection[str],
+) -> Dict[str, float]:
+    """Load the latest smoking status observation per patient."""
+    status_by_patient: Dict[str, float] = {}
+    date_by_patient: Dict[str, date] = {}
+
+    if not observations_path.exists():
+        return status_by_patient
+
+    smoker_values_norm = {value.strip().lower() for value in smoker_values}
+    nonsmoker_values_norm = {value.strip().lower() for value in nonsmoker_values}
+
+    with observations_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        header_map = make_header_map(reader.fieldnames)
+        for row in reader:
+            code = get_value(row, header_map, ["code"])
+            if code != status_code:
+                continue
+            patient_id = get_value(row, header_map, ["patient"])
+            if not patient_id:
+                continue
+            obs_date = parse_date(get_value(row, header_map, ["date"]))
+            if obs_date is None:
+                continue
+            value = (get_value(row, header_map, ["value"]) or "").strip().lower()
+            if value in smoker_values_norm:
+                status = 1.0
+            elif value in nonsmoker_values_norm:
+                status = 0.0
+            else:
+                continue
+            if patient_id not in date_by_patient or obs_date > date_by_patient[patient_id]:
+                date_by_patient[patient_id] = obs_date
+                status_by_patient[patient_id] = status
+    return status_by_patient
+
+
 def compute_population_stats(
     csv_dir: Path,
     urban_map: Dict[Tuple[str, str], int],

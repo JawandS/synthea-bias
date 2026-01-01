@@ -1,9 +1,10 @@
 # Sleep Apnea Demand Modeling Report
 
-- Generated: 2025-12-31T17:27:31
+- Generated: 2026-01-01T08:44:51
 - Baseline dataset: `output_baseline/csv`
 - Biased dataset: `output_rural_bias/csv`
 - BMI feature included: True (always on)
+- Smoking, alcohol use, and CHF features included: True
 
 ## Study Setup
 Commands used (from `scripts/NOTES.md`):
@@ -19,13 +20,12 @@ The override file `config/overrides_rural_sleep_apnea.properties` adjusts two co
 This simulates rural patients dropping out before testing or follow-up.
 
 ## Population Stats
-- Baseline patients: 23014 (urban 68.31%, rural 31.68%)
-- Biased patients: 23003 (urban 69.14%, rural 30.85%)
-- Sleep apnea prevalence (unique patients with condition): baseline 5.02% (1156/23014), biased 3.98% (916/23003)
-- Sleep disorder patients (module entry): baseline 1158, biased 1106
-- Dropouts (sleep disorder without sleep apnea): baseline 2 (0.17% of sleep disorder), biased 190 (17.18% of sleep disorder)
+- Baseline patients: 1163 (urban 69.56%, rural 30.44%)
+- Biased patients: 1168 (urban 69.26%, rural 30.74%)
+- Sleep apnea prevalence (unique patients with condition): baseline 4.99% (58/1163), biased 4.11% (48/1168)
+- Sleep disorder patients (module entry): baseline 58, biased 60
+- Dropouts (sleep disorder without sleep apnea): baseline 0 (0.00% of sleep disorder), biased 12 (20.00% of sleep disorder)
 - Urban/rural classification uses `geography/sdoh.csv` (URBAN field) via SDoH attributes.
-- Urban/rural lookup missing: baseline 1, biased 1
 
 ## Target Definition
 Total sleep-related spend per patient, computed as the sum of:
@@ -43,78 +43,116 @@ Sleep-related device codes: ['272265001', '701077002', '701100002', '702172008',
 Sleep-related supply codes: ['463659001', '467645007', '704718009', '706226000', '972002']
 
 ## Features (No Urban/Rural or Race/Ethnicity)
-age_years, male, income, hypertension
+age_years, male, income, bmi, smoker, alcohol_use, hypertension, chf
 
 ## Dataset Summary
-- Baseline: n=23014, mean_spend=$39,712.20, nonzero_rate=97.36%
-- Biased: n=23003, mean_spend=$38,099.49, nonzero_rate=97.51%
+- Baseline: n=1163, mean_spend=$22,384.23, nonzero_rate=97.68%
+- Biased: n=1168, mean_spend=$22,791.75, nonzero_rate=97.69%
 
 ## Split Configuration
-- Train/Val/Test sizes (baseline): 16109/3452/3453
-- Train/Val/Test sizes (biased): 16102/3450/3451
+- Train/Val/Test sizes (baseline): 814/174/175
+- Train/Val/Test sizes (biased): 817/175/176
 
 ## Model Selection (Validation MAE)
-- Baseline best params: {'n_estimators': 300, 'learning_rate': 0.01, 'max_depth': 3, 'min_samples_leaf': 5}
-  - Val MAE=52518.68, RMSE=188232.61, R2=0.062
-- Biased best params: {'n_estimators': 100, 'learning_rate': 0.05, 'max_depth': 3, 'min_samples_leaf': 5}
-  - Val MAE=50963.19, RMSE=196894.75, R2=0.087
+- Baseline best params: {'n_estimators': 100, 'learning_rate': 0.01, 'max_depth': 2, 'min_samples_leaf': 10}
+  - Val MAE=33201.30, RMSE=152340.88, R2=-0.008
+- Biased best params: {'n_estimators': 200, 'learning_rate': 0.01, 'max_depth': 4, 'min_samples_leaf': 20}
+  - Val MAE=20872.61, RMSE=46098.24, R2=0.033
 
 ## Gradient Boosted Decision Tree (Feature Importances)
 Feature importances are normalized and sum to 1.0 per model.
 
 | Feature | Baseline | Biased |
 | --- | --- | --- |
-| age_years | 0.743 | 0.756 |
-| male | 0.133 | 0.164 |
-| income | 0.096 | 0.034 |
-| hypertension | 0.028 | 0.046 |
+| age_years | 0.493 | 0.705 |
+| income | 0.354 | 0.101 |
+| bmi | 0.086 | 0.122 |
+| hypertension | 0.068 | 0.071 |
+| male | 0.000 | 0.001 |
+| smoker | 0.000 | 0.000 |
+| alcohol_use | 0.000 | 0.000 |
+| chf | 0.000 | 0.000 |
 
 ## Test Results (In-Dataset)
-- Baseline model on baseline test: MAE=56864.08, RMSE=217318.12, R2=0.084
-- Biased model on biased test: MAE=55195.68, RMSE=213018.90, R2=0.068
+- Baseline model on baseline test: MAE=28030.05, RMSE=56360.41, R2=0.059
+- Biased model on biased test: MAE=44669.21, RMSE=190212.17, R2=0.014
 
 ## Cross-Dataset Evaluation
-- Biased model on baseline test: MAE=55780.45, RMSE=216137.25, R2=0.094
-- Baseline model on biased test: MAE=55956.07, RMSE=213115.06, R2=0.067
+- Biased model on baseline test: MAE=24864.87, RMSE=52714.94, R2=0.177
+- Baseline model on biased test: MAE=44396.25, RMSE=184915.89, R2=0.069
 
 ## Demand Bias (Baseline Test Set)
-- Baseline model mean prediction: $37,989.74 (actual $43,151.48, diff $-5,161.73)
-- Biased model mean prediction: $37,297.02 (actual $43,151.48, diff $-5,854.46, rel -13.57% )
+- Baseline model mean prediction: $24,086.93 (actual $22,617.25, diff $1,469.68)
+- Biased model mean prediction: $22,523.47 (actual $22,617.25, diff $-93.78, rel -0.41% )
 
 ---
 
-# Extended Analysis: Model Variants and Statistical Testing
+# Extended Analysis: Bias Quantification
 
-## Model Variants
+## Geographic Bias Quantification (Linear Regression)
 
-This analysis compares two model variants to assess whether including
-geographic (urban/rural) information can control for access bias:
+This analysis uses linear regression to quantify the effect of urban/rural status
+on healthcare spending, controlling for age, gender, income, BMI, smoking status,
+alcohol use disorder, hypertension, and CHF.
 
-1. **Base Model**: Core features only (age, gender, income, BMI, hypertension)
-2. **Urban Model**: Core features + urban/rural indicator
+**Key insight**: The urban coefficient represents the spending difference between
+urban and rural patients *after controlling for other factors*. A significant
+difference between baseline and biased datasets indicates measurable access disparity.
 
-### Feature Sets
-- Base features: age_years, male, income, hypertension
-- Urban features: age_years, male, income, hypertension, urban
+### Urban Coefficient (Access Disparity Measure)
 
-## Urban Model Hyperparameters
+| Dataset | Urban Coef ($) | 95% CI | p-value | Significant? |
+| --- | ---: | --- | ---: | :---: |
+| Baseline (unbiased) | $-1,434 | [$-17,087, $14,044] | 0.8581 | No |
+| Biased (rural dropout) | $-1,585 | [$-16,378, $12,738] | 0.8551 | No |
 
-- Urban baseline best params: {'n_estimators': 300, 'learning_rate': 0.01, 'max_depth': 3, 'min_samples_leaf': 5}
-  - Val MAE=52462.32, RMSE=188218.29, R2=0.063
-- Urban biased best params: {'n_estimators': 100, 'learning_rate': 0.05, 'max_depth': 3, 'min_samples_leaf': 5}
-  - Val MAE=50972.99, RMSE=196898.77, R2=0.087
+### Interpretation
 
-## Urban Model Feature Importances
+- **Baseline urban coefficient**: $-1,434
+- **Biased urban coefficient**: $-1,585
+- **Difference (bias effect)**: $-151
 
-| Feature | Urban Baseline | Urban Biased |
+The biased dataset shows rural patients spending **$151 less** than
+in the baseline dataset, controlling for other factors. This difference represents
+the access disparity introduced by rural dropout.
+
+### All Coefficients (Standardized)
+
+Standardized coefficients allow comparison of relative feature importance.
+
+| Feature | Baseline (std) | Biased (std) |
+| --- | ---: | ---: |
+| age_years | 22,809.24 | 20,592.82 |
+| male | 8,138.28 | 6,598.92 |
+| income | -1,236.05 | -166.14 |
+| bmi | -9,398.27 | -10,253.11 |
+| smoker | -505.58 | 2,467.88 |
+| alcohol_use | -3,412.80 | -3,389.83 |
+| hypertension | 9,091.95 | 7,188.54 |
+| chf | -1,739.00 | -442.13 |
+| urban | -662.35 | -738.37 |
+
+### Coefficient Confidence Intervals
+
+| Feature | Baseline Coef [95% CI] | Biased Coef [95% CI] |
 | --- | --- | --- |
-| age_years | 0.741 | 0.756 |
-| male | 0.136 | 0.164 |
-| income | 0.082 | 0.034 |
-| hypertension | 0.027 | 0.046 |
-| urban | 0.014 | 0.000 |
+| age_years | $878 [$311, $1,637] | $778 [$351, $1,339] |
+| male | $16,277 [$4,854, $30,760] | $13,214 [$4,055, $24,732] |
+| income | $-0 [$-0, $0] | $-0 [$-0, $0] |
+| bmi | $-1,989 [$-4,118, $-420] | $-2,229 [$-4,088, $-689] |
+| smoker | $-6,471 [$-22,721, $10,208] | $31,643 [$-11,619, $112,090] |
+| alcohol_use | $-36,962 [$-77,663, $-1,246] | $-32,477 [$-56,887, $-15,277] |
+| hypertension | $22,086 [$-1,703, $47,896] | $17,522 [$-4,093, $42,014] |
+| chf | $-10,969 [$-49,751, $16,886] | $-2,861 [$-33,269, $24,478] |
+| urban | $-1,434 [$-17,087, $14,044] | $-1,585 [$-16,378, $12,738] |
+| intercept | $23,025 [$-1,016, $51,912] | $34,192 [$9,351, $64,071] |
 
-## Bootstrap Confidence Intervals
+### Linear Model R² (Test Set)
+
+- Baseline: R² = 0.1416
+- Biased: R² = 0.0316
+
+## GBDT Model Performance (Bootstrap CIs)
 
 Bootstrap iterations: 1000
 95% confidence intervals shown as [lower, upper]
@@ -123,19 +161,15 @@ Bootstrap iterations: 1000
 
 | Model | Dataset | MAE [95% CI] | RMSE [95% CI] | R² [95% CI] |
 | --- | --- | --- | --- | --- |
-| Base | Baseline | 56864.08 [49717.56, 64078.75] | 217318.12 [180173.50, 252553.59] | 0.08 [0.06, 0.11] |
-| Base | Biased | 55195.68 [48632.18, 62556.97] | 213018.90 [177526.95, 246502.16] | 0.07 [0.03, 0.10] |
-| Urban | Baseline | 56870.76 [49727.97, 64094.30] | 217304.35 [180016.96, 252830.04] | 0.08 [0.06, 0.11] |
-| Urban | Biased | 55198.71 [48637.39, 62562.23] | 213020.92 [177529.83, 246502.83] | 0.07 [0.03, 0.10] |
+| Base | Baseline | 28030.05 [21206.91, 35503.48] | 56360.41 [36974.39, 74114.61] | 0.06 [-0.17, 0.25] |
+| Base | Biased | 44669.21 [22099.46, 74474.85] | 190212.17 [50273.03, 298163.41] | 0.01 [-0.38, 0.07] |
 
 ### Cross-Population Performance
 
 | Model | Source → Target | MAE [95% CI] | RMSE [95% CI] | R² [95% CI] |
 | --- | --- | --- | --- | --- |
-| Base | Biased → Baseline | 55780.45 [48715.50, 63159.48] | 216137.25 [178883.87, 251524.31] | 0.09 [0.06, 0.12] |
-| Base | Baseline → Biased | 55956.07 [49296.58, 63096.11] | 213115.06 [177251.33, 246542.88] | 0.07 [0.04, 0.09] |
-| Urban | Biased → Baseline | 55784.38 [48717.63, 63165.47] | 216137.20 [178881.51, 251526.77] | 0.09 [0.06, 0.12] |
-| Urban | Baseline → Biased | 56028.61 [49419.59, 63136.20] | 212889.64 [177220.55, 246191.09] | 0.07 [0.04, 0.10] |
+| Base | Biased → Baseline | 24864.87 [18111.26, 31949.69] | 52714.94 [34132.85, 69816.59] | 0.18 [-0.00, 0.36] |
+| Base | Baseline → Biased | 44396.25 [22539.46, 73239.18] | 184915.89 [46304.06, 292277.51] | 0.07 [-0.19, 0.18] |
 
 ## Hypothesis Tests (Permutation)
 
@@ -145,31 +179,30 @@ p < 0.05 indicates statistically significant difference.
 
 | Test | Description | Observed Diff | p-value | Significant |
 | --- | --- | --- | --- | --- |
-| Base Cross-Pop | Biased model: baseline vs biased test | 584.78 | 0.8881 | No |
-| Urban Cross-Pop | Urban model: baseline vs biased test | 585.67 | 0.8911 | No |
-| Base vs Urban (Baseline) | Base vs Urban on baseline data | -6.69 | 1.0000 | No |
-| Base vs Urban (Biased) | Base vs Urban on biased data | -3.03 | 1.0000 | No |
+| Base Cross-Pop | Biased model: baseline vs biased test | -19804.34 | 0.2078 | No |
 
-## Interpretation
+## Methodology Notes
 
-### Key Questions Addressed
+### Bias Quantification Approach
 
-1. **Does the urban feature improve model performance?**
-   Compare Base vs Urban model MAE confidence intervals.
+Instead of using urban/rural as a feature in a predictive model (which would encode
+the disparity), we use linear regression to *measure* the urban coefficient:
 
-2. **Does including urban/rural control for geographic access bias?**
-   If the Urban model shows smaller cross-population MAE differences
-   than the Base model, the urban feature partially controls for bias.
+```
+spend ~ age + gender + income + bmi + smoker + alcohol_use + hypertension + chf + urban
+```
 
-3. **Is the bias statistically significant?**
-   The permutation test p-values indicate whether observed differences
-   are unlikely to occur by chance.
+The urban coefficient represents the average spending difference between urban and
+rural patients, controlling for other factors. By comparing this coefficient across
+datasets, we can quantify the access disparity introduced by the bias.
 
-### Methodology Notes
+### Key Findings
 
-- **Data leakage prevention**: Healthcare expenses and coverage removed from features
-  as they include the target (sleep-related spending).
-- **Consistent splits**: Same random seed used for both datasets to ensure
-  comparable train/val/test partitions.
-- **Bootstrap CIs**: Non-parametric confidence intervals via resampling.
-- **Permutation tests**: Distribution-free hypothesis testing by shuffling sample assignments.
+1. **The urban coefficient measures disparity, not need**: A positive coefficient means
+   urban patients spend more (controlling for demographics), indicating rural underutilization.
+
+2. **Comparing coefficients reveals bias**: If the biased dataset has a larger urban
+   coefficient than baseline, the rural dropout is creating measurable disparity.
+
+3. **Statistical significance**: Bootstrap CIs and permutation p-values indicate whether
+   the measured disparity is statistically robust.

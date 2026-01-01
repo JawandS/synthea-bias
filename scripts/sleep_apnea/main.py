@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Train and compare sleep apnea spend models across baseline and biased datasets.
 
-This study implements multiple model variants to evaluate whether including
-demographic features (specifically urban/rural status) can control for geographic
-access bias in healthcare utilization predictions.
+This study builds spend prediction models and then quantifies geographic access
+bias using a separate linear regression that includes the urban/rural flag.
 
 Model Variants:
-- base: Core features only (age, gender, income, BMI, hypertension)
-- urban: Core features + urban/rural indicator
+- base GBDT: Core features only (age, gender, income, BMI, smoking, alcohol use, hypertension, CHF)
+- linear bias model: Core features + urban/rural indicator (used for bias measurement)
 
 The study uses bootstrap resampling for confidence intervals and permutation
 testing for cross-population hypothesis tests.
@@ -49,6 +48,8 @@ from utils import (
     get_value,
     impute_missing,
     load_condition_patients,
+    load_latest_bmi,
+    load_latest_smoking_status,
     load_patient_urban_flags,
     load_sleep_spend,
     make_header_map,
@@ -57,6 +58,8 @@ from utils import (
 )
 
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 
 SLEEP_APNEA_CODES = {"73430006", "78275009"}
 SLEEP_DISORDER_CODE = "39898005"
@@ -82,6 +85,12 @@ SLEEP_SUPPLY_CODES = {"463659001", "467645007", "704718009", "706226000", "97200
 SLEEP_EQUIPMENT_CODES = SLEEP_DEVICE_CODES | SLEEP_SUPPLY_CODES
 
 HYPERTENSION_CODES = {"59621000"}
+CHF_CODES = {"88805009"}
+ALCOHOL_USE_CODES = {"7200002"}
+BMI_CODE = "39156-5"
+SMOKING_STATUS_CODE = "72166-2"
+SMOKER_VALUES = {"Smokes tobacco daily (finding)"}
+NON_SMOKER_VALUES = {"Ex-smoker (finding)", "Never smoked tobacco (finding)"}
 BASELINE_GENERATION_CMD = (
     "./run_synthea -p 25000 --exporter.csv.export=true --exporter.baseDirectory=./output_baseline"
 )
@@ -141,9 +150,13 @@ def build_dataset(
     - age_years: Patient age at dataset end date
     - male: Gender indicator (1.0 for male, 0.0 otherwise)
     - income: Annual income
+    - bmi: Latest recorded BMI
+    - smoker: Current smoker indicator
+    - alcohol_use: Alcohol use disorder indicator
     - hypertension: Hypertension diagnosis indicator
+    - chf: Congestive heart failure indicator
     
-    The urban flag is stored separately and can be added for the urban model variant.
+    The urban flag is stored separately for the linear bias model.
     
     Args:
         progress_callback: Optional callback(file_name, rows_processed) for progress.
@@ -151,8 +164,18 @@ def build_dataset(
     csv_dir = find_csv_dir(base_dir)
     patients_path = csv_dir / "patients.csv"
     conditions_path = csv_dir / "conditions.csv"
+    observations_path = csv_dir / "observations.csv"
 
     hypertension_patients = load_condition_patients(conditions_path, HYPERTENSION_CODES)
+    chf_patients = load_condition_patients(conditions_path, CHF_CODES)
+    alcohol_patients = load_condition_patients(conditions_path, ALCOHOL_USE_CODES)
+    bmi_by_patient = load_latest_bmi(observations_path, BMI_CODE)
+    smoking_by_patient = load_latest_smoking_status(
+        observations_path,
+        SMOKING_STATUS_CODE,
+        SMOKER_VALUES,
+        NON_SMOKER_VALUES,
+    )
     ref_date = find_dataset_end_date(csv_dir)
     if ref_date is None:
         ref_date = date.today()
@@ -174,7 +197,11 @@ def build_dataset(
         "age_years",
         "male",
         "income",
+        "bmi",
+        "smoker",
+        "alcohol_use",
         "hypertension",
+        "chf",
     ]
 
     X: List[List[Optional[float]]] = []
@@ -202,13 +229,21 @@ def build_dataset(
 
             income = parse_float(get_value(row, header_map, ["income"]))
 
+            bmi = bmi_by_patient.get(patient_id)
+            smoker = smoking_by_patient.get(patient_id)
+            alcohol_use = 1.0 if patient_id in alcohol_patients else 0.0
             hypertension = 1.0 if patient_id in hypertension_patients else 0.0
+            chf = 1.0 if patient_id in chf_patients else 0.0
 
             features = [
                 age_years,
                 male,
                 income,
+                bmi,
+                smoker,
+                alcohol_use,
                 hypertension,
+                chf,
             ]
 
             X.append(features)
@@ -320,7 +355,7 @@ def add_urban_feature(
     split: Split,
     feature_names: List[str],
 ) -> Tuple[Split, List[str]]:
-    """Add urban flag as a feature to create the urban model variant.
+    """Add urban flag as a feature for an optional urban model variant.
     
     Creates a new Split with the urban feature appended to each feature vector.
     Missing urban values are imputed as 0.5 (unknown).
@@ -398,6 +433,154 @@ def bootstrap_metrics(
             "std": std_val,
         }
     return result
+
+
+@dataclass
+class BiasAnalysis:
+    """Results from linear regression bias quantification."""
+    # Coefficients (unstandardized)
+    coefficients: Dict[str, float]
+    # Standardized coefficients for comparison
+    standardized_coefficients: Dict[str, float]
+    # Bootstrap confidence intervals for each coefficient
+    coefficient_cis: Dict[str, Dict[str, float]]
+    # Model fit statistics
+    r2: float
+    # The key metric: urban coefficient represents access disparity
+    urban_coefficient: float
+    urban_ci_low: float
+    urban_ci_high: float
+    urban_pvalue: float  # Permutation-based p-value
+
+
+def fit_linear_bias_model(
+    split: Split,
+    feature_names: List[str],
+    n_bootstrap: int,
+    seed: int,
+    progress_callback: Optional[Callable[[], None]] = None,
+) -> BiasAnalysis:
+    """Fit linear regression with urban feature to quantify geographic bias.
+    
+    The urban coefficient represents the effect of being urban (vs rural)
+    on healthcare spending, controlling for the base demographic and clinical features.
+    
+    A significant negative coefficient in the biased dataset indicates rural
+    patients have lower spending due to access barriers, not lower need.
+    
+    Returns:
+        BiasAnalysis with coefficients, CIs, and significance tests.
+    """
+    rng = random.Random(seed)
+    
+    # Build feature matrix with urban flag
+    def _add_urban(X: List[List[float]], urban_flags: List[Optional[float]]) -> List[List[float]]:
+        return [
+            row + [1.0 if u == 1.0 else 0.0 if u == 0.0 else 0.5]
+            for row, u in zip(X, urban_flags)
+        ]
+    
+    X_train = _add_urban(split.X_train, split.train_urban)
+    X_test = _add_urban(split.X_test, split.test_urban)
+    y_train = split.y_train
+    y_test = split.y_test
+    
+    feature_names_with_urban = feature_names + ["urban"]
+    
+    # Fit on full training data
+    model = LinearRegression()
+    model.fit(X_train, y_train)
+    
+    # Get unstandardized coefficients
+    coefficients = {name: coef for name, coef in zip(feature_names_with_urban, model.coef_)}
+    coefficients["intercept"] = model.intercept_
+    
+    # Standardized coefficients (for relative importance)
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    model_scaled = LinearRegression()
+    model_scaled.fit(X_train_scaled, y_train)
+    standardized_coefficients = {
+        name: coef for name, coef in zip(feature_names_with_urban, model_scaled.coef_)
+    }
+    
+    # R² on test set
+    y_pred = model.predict(X_test)
+    ss_res = sum((yt - yp) ** 2 for yt, yp in zip(y_test, y_pred))
+    ss_tot = sum((yt - sum(y_test) / len(y_test)) ** 2 for yt in y_test)
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    
+    # Bootstrap confidence intervals for coefficients
+    n_train = len(X_train)
+    bootstrap_coefs: Dict[str, List[float]] = {name: [] for name in feature_names_with_urban}
+    bootstrap_coefs["intercept"] = []
+    
+    for _ in range(n_bootstrap):
+        # Resample training data
+        indices = [rng.randint(0, n_train - 1) for _ in range(n_train)]
+        X_boot = [X_train[i] for i in indices]
+        y_boot = [y_train[i] for i in indices]
+        
+        # Fit bootstrap model
+        boot_model = LinearRegression()
+        boot_model.fit(X_boot, y_boot)
+        
+        for name, coef in zip(feature_names_with_urban, boot_model.coef_):
+            bootstrap_coefs[name].append(coef)
+        bootstrap_coefs["intercept"].append(boot_model.intercept_)
+        
+        if progress_callback:
+            progress_callback()
+    
+    # Compute CIs
+    alpha = 0.05
+    coefficient_cis = {}
+    for name in list(feature_names_with_urban) + ["intercept"]:
+        sorted_vals = sorted(bootstrap_coefs[name])
+        low_idx = int(alpha / 2 * n_bootstrap)
+        high_idx = int((1 - alpha / 2) * n_bootstrap) - 1
+        mean_val = sum(bootstrap_coefs[name]) / n_bootstrap
+        std_val = (sum((v - mean_val) ** 2 for v in bootstrap_coefs[name]) / n_bootstrap) ** 0.5
+        coefficient_cis[name] = {
+            "point": coefficients.get(name, coefficients.get("intercept", 0.0)),
+            "ci_low": sorted_vals[low_idx],
+            "ci_high": sorted_vals[high_idx],
+            "std": std_val,
+        }
+    
+    # Permutation test for urban coefficient significance
+    # Test H0: urban coefficient = 0 by permuting urban labels
+    observed_urban_coef = coefficients["urban"]
+    urban_flags_train = [row[-1] for row in X_train]  # Extract urban from last column
+    X_train_no_urban = [row[:-1] for row in X_train]
+    
+    count_extreme = 0
+    n_perm = min(n_bootstrap, 1000)  # Use fewer permutations for speed
+    for _ in range(n_perm):
+        # Shuffle urban flags
+        shuffled_urban = urban_flags_train.copy()
+        rng.shuffle(shuffled_urban)
+        X_perm = [row + [u] for row, u in zip(X_train_no_urban, shuffled_urban)]
+        
+        perm_model = LinearRegression()
+        perm_model.fit(X_perm, y_train)
+        perm_urban_coef = perm_model.coef_[-1]  # Urban is last feature
+        
+        if abs(perm_urban_coef) >= abs(observed_urban_coef):
+            count_extreme += 1
+    
+    urban_pvalue = (count_extreme + 1) / (n_perm + 1)
+    
+    return BiasAnalysis(
+        coefficients=coefficients,
+        standardized_coefficients=standardized_coefficients,
+        coefficient_cis=coefficient_cis,
+        r2=r2,
+        urban_coefficient=coefficients["urban"],
+        urban_ci_low=coefficient_cis["urban"]["ci_low"],
+        urban_ci_high=coefficient_cis["urban"]["ci_high"],
+        urban_pvalue=urban_pvalue,
+    )
 
 
 def permutation_test(
@@ -516,16 +699,18 @@ def main() -> int:
     """Entry point for training and reporting.
     
     Trains multiple model variants:
-    1. base_baseline: Base features trained on baseline data
-    2. base_biased: Base features trained on biased data
-    3. urban_baseline: Base + urban feature trained on baseline data
-    4. urban_biased: Base + urban feature trained on biased data
+    1. base_baseline: Base features trained on baseline data (GBDT)
+    2. base_biased: Base features trained on biased data (GBDT)
+    3. bias_baseline: Linear regression with urban feature on baseline data
+    4. bias_biased: Linear regression with urban feature on biased data
     
     Performs cross-population evaluation with bootstrap confidence intervals
     and permutation tests for statistical significance.
     """
     parser = argparse.ArgumentParser(
-        description="Train GBDT models to predict sleep-related spend and compare baseline vs bias."
+        description=(
+            "Train GBDT models to predict sleep-related spend and quantify bias with a linear model."
+        )
     )
     parser.add_argument("--baseline", default="output_baseline", help="Baseline output directory.")
     parser.add_argument("--biased", default="output_rural_bias", help="Biased output directory.")
@@ -545,7 +730,7 @@ def main() -> int:
     console.print()
     console.print(Panel.fit(
         "[bold cyan]Sleep Apnea Spend Model Training[/bold cyan]\n"
-        "[dim]Comparing baseline vs biased datasets with urban/rural analysis[/dim]",
+        "[dim]Comparing baseline vs biased datasets with linear bias analysis[/dim]",
         border_style="cyan"
     ))
     console.print()
@@ -610,19 +795,13 @@ def main() -> int:
         split_biased = split_dataset(biased, args.train_frac, args.val_frac, args.seed)
         progress.advance(split_task)
 
-        # Create urban-augmented splits
-        split_baseline_urban, feature_names_urban = add_urban_feature(
-            split_baseline, baseline.feature_names
-        )
-        split_biased_urban, _ = add_urban_feature(split_biased, biased.feature_names)
-
         param_grid = build_param_grid()
         total_grid = len(param_grid)
 
-        # Training models - 4 models, each with full grid search
+        # Training base GBDT models (without urban feature) - 2 models
         train_task = progress.add_task(
-            "[green]Training models (grid search)...",
-            total=total_grid * 4
+            "[green]Training GBDT models (grid search)...",
+            total=total_grid * 2
         )
 
         def advance_train() -> None:
@@ -634,29 +813,36 @@ def main() -> int:
         base_biased_model, base_biased_params, base_biased_val, _ = train_with_validation(
             split_biased, param_grid, args.seed, biased.feature_names, advance_train
         )
-        urban_baseline_model, urban_baseline_params, urban_baseline_val, _ = train_with_validation(
-            split_baseline_urban, param_grid, args.seed, feature_names_urban, advance_train
-        )
-        urban_biased_model, urban_biased_params, urban_biased_val, _ = train_with_validation(
-            split_biased_urban, param_grid, args.seed, feature_names_urban, advance_train
+
+        # Linear regression bias analysis (replaces urban GBDT model)
+        # This quantifies the urban coefficient to measure access disparity
+        bias_task = progress.add_task(
+            "[blue]Linear regression bias analysis...",
+            total=args.n_bootstrap * 2
         )
 
-        # In-dataset test predictions
+        def advance_bias() -> None:
+            progress.advance(bias_task)
+
+        bias_baseline = fit_linear_bias_model(
+            split_baseline, baseline.feature_names, args.n_bootstrap, args.seed, advance_bias
+        )
+        bias_biased = fit_linear_bias_model(
+            split_biased, biased.feature_names, args.n_bootstrap, args.seed, advance_bias
+        )
+
+        # In-dataset test predictions (base models only)
         base_baseline_preds = list(base_baseline_model.predict(split_baseline.X_test))
         base_biased_preds = list(base_biased_model.predict(split_biased.X_test))
-        urban_baseline_preds = list(urban_baseline_model.predict(split_baseline_urban.X_test))
-        urban_biased_preds = list(urban_biased_model.predict(split_biased_urban.X_test))
 
-        # Cross-dataset predictions
+        # Cross-dataset predictions (base models only)
         base_biased_on_baseline_preds = list(base_biased_model.predict(split_baseline.X_test))
         base_baseline_on_biased_preds = list(base_baseline_model.predict(split_biased.X_test))
-        urban_biased_on_baseline_preds = list(urban_biased_model.predict(split_baseline_urban.X_test))
-        urban_baseline_on_biased_preds = list(urban_baseline_model.predict(split_biased_urban.X_test))
 
-        # Bootstrap CIs - 8 evaluations × n_bootstrap iterations
+        # Bootstrap CIs - 4 evaluations × n_bootstrap iterations (reduced from 8)
         bootstrap_task = progress.add_task(
             "[yellow]Bootstrap confidence intervals...",
-            total=args.n_bootstrap * 8
+            total=args.n_bootstrap * 4
         )
 
         def advance_bootstrap() -> None:
@@ -671,14 +857,6 @@ def main() -> int:
                 split_biased.y_test, base_biased_preds, args.n_bootstrap, args.seed,
                 progress_callback=advance_bootstrap
             ),
-            "urban_baseline_in": bootstrap_metrics(
-                split_baseline_urban.y_test, urban_baseline_preds, args.n_bootstrap, args.seed,
-                progress_callback=advance_bootstrap
-            ),
-            "urban_biased_in": bootstrap_metrics(
-                split_biased_urban.y_test, urban_biased_preds, args.n_bootstrap, args.seed,
-                progress_callback=advance_bootstrap
-            ),
             "base_biased_on_baseline": bootstrap_metrics(
                 split_baseline.y_test, base_biased_on_baseline_preds, args.n_bootstrap, args.seed,
                 progress_callback=advance_bootstrap
@@ -687,20 +865,12 @@ def main() -> int:
                 split_biased.y_test, base_baseline_on_biased_preds, args.n_bootstrap, args.seed,
                 progress_callback=advance_bootstrap
             ),
-            "urban_biased_on_baseline": bootstrap_metrics(
-                split_baseline_urban.y_test, urban_biased_on_baseline_preds, args.n_bootstrap, args.seed,
-                progress_callback=advance_bootstrap
-            ),
-            "urban_baseline_on_biased": bootstrap_metrics(
-                split_biased_urban.y_test, urban_baseline_on_biased_preds, args.n_bootstrap, args.seed,
-                progress_callback=advance_bootstrap
-            ),
         }
 
-        # Permutation tests - 4 tests × n_permutations iterations
+        # Permutation test for cross-population performance
         perm_task = progress.add_task(
             "[magenta]Permutation tests...",
-            total=args.n_permutations * 4
+            total=args.n_permutations
         )
 
         def advance_perm() -> None:
@@ -712,22 +882,47 @@ def main() -> int:
                 split_biased.y_test, base_biased_preds,
                 args.n_permutations, args.seed, "mae", advance_perm
             ),
-            "urban_cross_pop": permutation_test(
-                split_baseline_urban.y_test, urban_biased_on_baseline_preds,
-                split_biased_urban.y_test, urban_biased_preds,
-                args.n_permutations, args.seed, "mae", advance_perm
-            ),
-            "base_vs_urban_baseline": permutation_test(
-                split_baseline.y_test, base_baseline_preds,
-                split_baseline_urban.y_test, urban_baseline_preds,
-                args.n_permutations, args.seed, "mae", advance_perm
-            ),
-            "base_vs_urban_biased": permutation_test(
-                split_biased.y_test, base_biased_preds,
-                split_biased_urban.y_test, urban_biased_preds,
-                args.n_permutations, args.seed, "mae", advance_perm
-            ),
         }
+
+    # Print bias analysis summary
+    console.print()
+    console.print(Panel.fit(
+        "[bold green]Bias Quantification Results[/bold green]",
+        border_style="green"
+    ))
+    
+    bias_table = Table(title="Urban Coefficient (Rural Access Disparity)", show_header=True, header_style="bold")
+    bias_table.add_column("Dataset", style="cyan")
+    bias_table.add_column("Urban Coef ($)", justify="right")
+    bias_table.add_column("95% CI", justify="right")
+    bias_table.add_column("p-value", justify="right")
+    bias_table.add_column("Significant?", justify="center")
+    
+    def format_coef(ba: BiasAnalysis) -> Tuple[str, str, str, str]:
+        coef = f"${ba.urban_coefficient:,.0f}"
+        ci = f"[${ba.urban_ci_low:,.0f}, ${ba.urban_ci_high:,.0f}]"
+        pval = f"{ba.urban_pvalue:.4f}"
+        sig = "✓ Yes" if ba.urban_pvalue < 0.05 else "✗ No"
+        return coef, ci, pval, sig
+    
+    coef_b, ci_b, pval_b, sig_b = format_coef(bias_baseline)
+    coef_bi, ci_bi, pval_bi, sig_bi = format_coef(bias_biased)
+    
+    bias_table.add_row("Baseline (unbiased)", coef_b, ci_b, pval_b, sig_b)
+    bias_table.add_row("Biased (rural dropout)", coef_bi, ci_bi, pval_bi, sig_bi)
+    console.print(bias_table)
+    
+    # Interpretation
+    diff = bias_biased.urban_coefficient - bias_baseline.urban_coefficient
+    console.print()
+    console.print(f"[bold]Interpretation:[/bold]")
+    console.print(f"  • Baseline urban coefficient: ${bias_baseline.urban_coefficient:,.0f}")
+    console.print(f"  • Biased urban coefficient: ${bias_biased.urban_coefficient:,.0f}")
+    console.print(f"  • Difference (bias effect): ${diff:,.0f}")
+    if diff < 0:
+        console.print(f"  • [yellow]Rural patients in biased data show ${abs(diff):,.0f} less spending[/yellow]")
+        console.print(f"    [dim]This represents the access disparity captured by the model[/dim]")
+    console.print()
 
     # Legacy analysis for backward compatibility with report
     analysis = analyze_models(
@@ -741,6 +936,9 @@ def main() -> int:
         sleep_apnea_codes=SLEEP_APNEA_CODES,
     )
 
+    # Feature names with urban for report
+    feature_names_urban = baseline.feature_names + ["urban"]
+
     report_inputs = ReportInputs(
         baseline_csv_dir=baseline.csv_dir,
         biased_csv_dir=biased.csv_dir,
@@ -748,12 +946,12 @@ def main() -> int:
         feature_names_urban=feature_names_urban,
         baseline_params=base_baseline_params,
         biased_params=base_biased_params,
-        urban_baseline_params=urban_baseline_params,
-        urban_biased_params=urban_biased_params,
+        urban_baseline_params=None,  # No longer using urban GBDT
+        urban_biased_params=None,
         baseline_val_metrics=base_baseline_val,
         biased_val_metrics=base_biased_val,
-        urban_baseline_val_metrics=urban_baseline_val,
-        urban_biased_val_metrics=urban_biased_val,
+        urban_baseline_val_metrics=None,
+        urban_biased_val_metrics=None,
         analysis=analysis,
         baseline_generation_cmd=BASELINE_GENERATION_CMD,
         biased_generation_cmd=BIASED_GENERATION_CMD,
@@ -767,9 +965,12 @@ def main() -> int:
         n_bootstrap=args.n_bootstrap,
         n_permutations=args.n_permutations,
         base_baseline_model=base_baseline_model,
-        urban_baseline_model=urban_baseline_model,
+        urban_baseline_model=None,  # No longer using urban GBDT
         base_biased_model=base_biased_model,
-        urban_biased_model=urban_biased_model,
+        urban_biased_model=None,
+        # New bias analysis results
+        bias_baseline=bias_baseline,
+        bias_biased=bias_biased,
     )
 
     write_report(Path(args.out), report_inputs)

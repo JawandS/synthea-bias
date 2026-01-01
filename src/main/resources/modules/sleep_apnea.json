@@ -43,11 +43,316 @@
         }
       },
       "unit": "years",
+      "direct_transition": "Initialize Sleep Apnea Risk Score"
+    },
+    "Initialize Sleep Apnea Risk Score": {
+      "type": "SetAttribute",
+      "attribute": "sleep_apnea_risk_score",
+      "value": 0,
+      "direct_transition": "Sleep Apnea BMI Severe Check"
+    },
+    "Sleep Apnea BMI Severe Check": {
+      "type": "Simple",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Vital Sign",
+            "vital_sign": "BMI",
+            "operator": ">=",
+            "value": 35
+          },
+          "transition": "Sleep Apnea BMI Severe Increment 1"
+        },
+        {
+          "transition": "Sleep Apnea BMI Obese Check"
+        }
+      ]
+    },
+    "Sleep Apnea BMI Severe Increment 1": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea BMI Severe Increment 2"
+    },
+    "Sleep Apnea BMI Severe Increment 2": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea Smoker Check"
+    },
+    "Sleep Apnea BMI Obese Check": {
+      "type": "Simple",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Vital Sign",
+            "vital_sign": "BMI",
+            "operator": ">=",
+            "value": 30
+          },
+          "transition": "Sleep Apnea BMI Obese Increment"
+        },
+        {
+          "transition": "Sleep Apnea Smoker Check"
+        }
+      ]
+    },
+    "Sleep Apnea BMI Obese Increment": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea Smoker Check"
+    },
+    "Sleep Apnea Smoker Check": {
+      "type": "Simple",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "smoker",
+            "operator": "==",
+            "value": true
+          },
+          "transition": "Sleep Apnea Smoker Increment"
+        },
+        {
+          "transition": "Sleep Apnea Alcohol Check"
+        }
+      ]
+    },
+    "Sleep Apnea Smoker Increment": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea Alcohol Check"
+    },
+    "Sleep Apnea Alcohol Check": {
+      "type": "Simple",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "alcoholic",
+            "operator": "==",
+            "value": true
+          },
+          "transition": "Sleep Apnea Alcohol Increment"
+        },
+        {
+          "transition": "Sleep Apnea CHF Check"
+        }
+      ]
+    },
+    "Sleep Apnea Alcohol Increment": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea Alcohol Use Disorder"
+    },
+    "Sleep Apnea Alcohol Use Disorder": {
+      "type": "ConditionOnset",
+      "codes": [
+        {
+          "system": "SNOMED-CT",
+          "code": "7200002",
+          "display": "Alcoholism (disorder)"
+        }
+      ],
+      "direct_transition": "Sleep Apnea CHF Check"
+    },
+    "Sleep Apnea CHF Check": {
+      "type": "Simple",
+      "conditional_transition": [
+        {
+          "condition": {
+            "condition_type": "Attribute",
+            "attribute": "chf",
+            "operator": "is not nil"
+          },
+          "transition": "Sleep Apnea CHF Increment 1"
+        },
+        {
+          "transition": "Prevalence"
+        }
+      ]
+    },
+    "Sleep Apnea CHF Increment 1": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
+      "direct_transition": "Sleep Apnea CHF Increment 2"
+    },
+    "Sleep Apnea CHF Increment 2": {
+      "type": "Counter",
+      "attribute": "sleep_apnea_risk_score",
+      "action": "increment",
       "direct_transition": "Prevalence"
     },
     "Prevalence": {
       "type": "Simple",
       "complex_transition": [
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "M"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 4
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.3
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.7
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "F"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 4
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.2
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.8
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "M"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 2
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.22
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.78
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "F"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 2
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.12
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.88
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "M"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 1
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.16
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.84
+            }
+          ]
+        },
+        {
+          "condition": {
+            "condition_type": "And",
+            "conditions": [
+              {
+                "condition_type": "Gender",
+                "gender": "F"
+              },
+              {
+                "condition_type": "Attribute",
+                "attribute": "sleep_apnea_risk_score",
+                "operator": ">=",
+                "value": 1
+              }
+            ]
+          },
+          "distributions": [
+            {
+              "transition": "Sleep Disorder",
+              "distribution": 0.08
+            },
+            {
+              "transition": "Terminal",
+              "distribution": 0.92
+            }
+          ]
+        },
         {
           "condition": {
             "condition_type": "Gender",
