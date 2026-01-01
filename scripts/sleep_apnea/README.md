@@ -10,7 +10,7 @@ Pick a state with rural counties (e.g., Maine) so the rural branch is exercised.
 
 ### Baseline Dataset
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 200000 \
+./run_synthea -s 160 -cs 160 -o false -p 20000 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=true \
   --exporter.baseDirectory=./output_baseline \
@@ -19,7 +19,7 @@ Pick a state with rural counties (e.g., Maine) so the rural branch is exercised.
 
 ### Biased Dataset (Rural Access Bias)
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 200000 \
+./run_synthea -s 160 -cs 160 -o false -p 20000 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=true \
   --exporter.baseDirectory=./output_rural_bias \
