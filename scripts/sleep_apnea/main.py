@@ -29,6 +29,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
@@ -570,7 +571,7 @@ def main() -> int:
             total=estimated_rows_per_dataset
         )
 
-        def make_load_callback(task_id: int, dataset_name: str) -> Callable[[str, int], None]:
+        def make_load_callback(task_id: TaskID, dataset_name: str) -> Callable[[str, int], None]:
             """Create a progress callback for dataset loading."""
             file_progress: Dict[str, int] = {}
             def callback(file_name: str, rows: int) -> None:
