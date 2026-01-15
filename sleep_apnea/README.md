@@ -4,6 +4,11 @@ This case study demonstrates how healthcare access disparities can be introduced
 in synthetic patient data. We compare a baseline Synthea simulation against a biased version
 where rural patients experience higher dropout rates in the sleep apnea care pathway.
 
+## Technical overview
+- `load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
+- `summary_stats.py`: provides summary statistics on the datasets (should be very similar)
+- `models.py`: trains logistic regression, random forest, and gradient boosted decision tree models to predict sleep apnea diagnosis using the defined features. Implements train/test/validate split and hyperparameter tuning.
+
 ## Data Generation
 
 Pick a state with rural counties (e.g., Montana) so the rural branch is exercised.
@@ -114,22 +119,4 @@ The demand model uses the following features (intentionally excluding urban/rura
 | `chf` | `conditions.csv` | Congestive heart failure (SNOMED 88805009) |
 
 ## Target Definition
-
-Total sleep-related healthcare spend per patient, computed as the sum of:
-
-1. **Encounters**: `TOTAL_CLAIM_COST` from `encounters.csv` where:
-   - `REASONCODE` matches a sleep condition code, OR
-   - `CODE` matches a sleep-specific encounter code
-
-2. **Procedures**: `BASE_COST` from `procedures.csv` where:
-   - `CODE` matches a sleep procedure code, OR
-   - `REASONCODE` matches a sleep condition code, OR
-   - The procedure is tied to a sleep-related encounter
-
-3. **Medications**: `TOTALCOST` from `medications.csv` where:
-   - `REASONCODE` matches a sleep condition code, OR
-   - The medication is tied to a sleep-related encounter
-
-4. **Devices/Supplies**: MODE cost from `costs/devices.csv` or `costs/supplies.csv` for:
-   - Sleep-related device/supply codes, OR
-   - Items tied to sleep-related encounters
+If the individual has been diagnosed with sleep apnea during the simulation.

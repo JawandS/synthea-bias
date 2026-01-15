@@ -1,0 +1,3 @@
+# Python generates files
+__pycache__/
+.venv/
