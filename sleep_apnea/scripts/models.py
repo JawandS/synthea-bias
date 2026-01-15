@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import pickle
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -104,9 +105,28 @@ class Dataset:
 class ModelResult:
     dataset: str
     model: str
+    estimator: Pipeline
     metrics: Dict[str, float]
     split_sizes: Tuple[int, int, int]
     params: Dict[str, object]
+
+
+@dataclass
+class SplitData:
+    X_train: pd.DataFrame
+    X_val: pd.DataFrame
+    X_test: pd.DataFrame
+    y_train: pd.Series
+    y_val: pd.Series
+    y_test: pd.Series
+
+
+@dataclass
+class CrossEvaluation:
+    model: str
+    baseline_metrics: Dict[str, float]
+    biased_metrics: Dict[str, float]
+    deltas: Dict[str, float]
 
 
 @dataclass
@@ -397,6 +417,32 @@ def _split_data(
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
+def split_dataset(
+    dataset: Dataset,
+    train_frac: float,
+    val_frac: float,
+    seed: int,
+    progress: Optional[ProgressReporter] = None,
+) -> SplitData:
+    X_train, X_val, X_test, y_train, y_val, y_test = _split_data(
+        dataset.features,
+        dataset.labels,
+        train_frac,
+        val_frac,
+        seed,
+    )
+    if progress:
+        progress.advance(f"Split dataset '{dataset.name}' into train/val/test")
+    return SplitData(
+        X_train=X_train,
+        X_val=X_val,
+        X_test=X_test,
+        y_train=y_train,
+        y_val=y_val,
+        y_test=y_test,
+    )
+
+
 def _evaluate(y_true: pd.Series, y_prob: Sequence[float]) -> Dict[str, float]:
     return {
         "auc": roc_auc_score(y_true, y_prob),
@@ -520,16 +566,12 @@ def train_models(
     seed: int,
     train_frac: float,
     val_frac: float,
+    split: Optional[SplitData] = None,
     progress: Optional[ProgressReporter] = None,
 ) -> List[ModelResult]:
-    X_train, X_val, X_test, y_train, y_val, y_test = _split_data(
-        dataset.features,
-        dataset.labels,
-        train_frac,
-        val_frac,
-        seed,
-    )
-    split_sizes = (len(y_train), len(y_val), len(y_test))
+    if split is None:
+        split = split_dataset(dataset, train_frac, val_frac, seed, progress=progress)
+    split_sizes = (len(split.y_train), len(split.y_val), len(split.y_test))
 
     results: List[ModelResult] = []
     if progress:
@@ -538,10 +580,16 @@ def train_models(
         if progress:
             progress.log(f"Starting model '{name}'")
         model, params, _ = _select_best_model(
-            pipeline, grid, X_train, y_train, X_val, y_val, progress=progress
+            pipeline,
+            grid,
+            split.X_train,
+            split.y_train,
+            split.X_val,
+            split.y_val,
+            progress=progress,
         )
-        probs = model.predict_proba(X_test)[:, 1].tolist()
-        metrics = _evaluate(y_test, probs)
+        probs = model.predict_proba(split.X_test)[:, 1].tolist()
+        metrics = _evaluate(split.y_test, probs)
         if progress:
             progress.advance(
                 f"Finished model '{name}': auc={metrics['auc']:.3f}, ap={metrics['ap']:.3f}"
@@ -550,6 +598,7 @@ def train_models(
             ModelResult(
                 dataset=dataset.name,
                 model=name,
+                estimator=model,
                 metrics=metrics,
                 split_sizes=split_sizes,
                 params=params,
@@ -572,12 +621,27 @@ def write_report(
     results: List[ModelResult],
     train_frac: float,
     val_frac: float,
+    cross_results: List[CrossEvaluation],
+    cross_note: str,
+    cross_test_size: int,
     progress: Optional[ProgressReporter] = None,
 ) -> None:
     lines: List[str] = []
     lines.append("# Sleep Apnea Diagnosis Model Report")
     lines.append("")
     lines.append(f"Train/val/test split: {train_frac:.2f}/{val_frac:.2f}/{1.0 - train_frac - val_frac:.2f}")
+    lines.append("")
+    lines.append("## Model Specification")
+    lines.append("")
+    lines.append("**Features (no urban/rural):**")
+    lines.append("")
+    for feature in FEATURE_NAMES:
+        lines.append(f"- {feature}")
+    lines.append("")
+    lines.append(
+        "Models are trained with validation-based hyperparameter selection, then re-fit on the combined "
+        "train+validation split before final evaluation on the held-out test set."
+    )
     lines.append("")
 
     lines.append("## Dataset Summary")
@@ -608,6 +672,74 @@ def write_report(
         )
     lines.append("")
 
+    lines.append("## Biased Model on Baseline Test Set")
+    lines.append("")
+    lines.append(
+        "To quantify performance degradation, the biased-trained models are evaluated on the baseline test set. "
+        "We first restrict the baseline test cohort to patient IDs that also appear in the biased dataset, then "
+        "remove any IDs that were seen during biased train/validation to avoid repeats. This ensures the biased "
+        "models are evaluated only on unseen baseline patients."
+    )
+    lines.append("")
+    lines.append(cross_note)
+    lines.append("")
+    if cross_results:
+        lines.append("| Model | Baseline AUC | Biased AUC | Δ AUC | Baseline AP | Biased AP | Δ AP | Baseline Brier | Biased Brier | Δ Brier | Test N |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for result in cross_results:
+            lines.append(
+                "| {model} | {b_auc} | {bi_auc} | {d_auc} | {b_ap} | {bi_ap} | {d_ap} | {b_brier} | {bi_brier} | {d_brier} | {n} |".format(
+                    model=result.model,
+                    b_auc=_format_metric(result.baseline_metrics["auc"]),
+                    bi_auc=_format_metric(result.biased_metrics["auc"]),
+                    d_auc=_format_metric(result.deltas["auc"]),
+                    b_ap=_format_metric(result.baseline_metrics["ap"]),
+                    bi_ap=_format_metric(result.biased_metrics["ap"]),
+                    d_ap=_format_metric(result.deltas["ap"]),
+                    b_brier=_format_metric(result.baseline_metrics["brier"]),
+                    bi_brier=_format_metric(result.biased_metrics["brier"]),
+                    d_brier=_format_metric(result.deltas["brier"]),
+                    n=f"{cross_test_size:,}",
+                )
+            )
+        lines.append("")
+    else:
+        lines.append("_No overlapping baseline test patients available after filtering._")
+        lines.append("")
+
+    lines.append("## Performance Degradation Interpretation")
+    lines.append("")
+    if cross_results:
+        lines.append(
+            "Training on the biased dataset consistently reduces performance when evaluated on the baseline test cohort:"
+        )
+        lines.append("")
+        for result in cross_results:
+            delta_auc = result.deltas["auc"]
+            delta_ap = result.deltas["ap"]
+            delta_brier = result.deltas["brier"]
+            lines.append(
+                "- {model}: AUC {auc:+.3f}, AP {ap:+.3f}, Brier {brier:+.3f} "
+                "(negative AUC/AP and positive Brier indicate worse performance).".format(
+                    model=result.model,
+                    auc=delta_auc,
+                    ap=delta_ap,
+                    brier=delta_brier,
+                )
+            )
+        lines.append("")
+        lines.append(
+            "This gap suggests the biased training data yields a model that generalizes worse to the baseline "
+            "population, highlighting how access-driven underdiagnosis can degrade downstream prediction quality."
+        )
+        lines.append("")
+    else:
+        lines.append(
+            "Cross-dataset evaluation was skipped because no eligible overlapping baseline test patients remained "
+            "after filtering, so degradation could not be quantified."
+        )
+        lines.append("")
+
     lines.append("## Selected Hyperparameters")
     lines.append("")
     for dataset in datasets:
@@ -624,6 +756,17 @@ def write_report(
     path.write_text("\n".join(lines), encoding="utf-8")
     if progress:
         progress.advance(f"Report written to {path}")
+
+
+def save_models(output_dir: Path, results: List[ModelResult], progress: Optional[ProgressReporter] = None) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for result in results:
+        filename = f"{result.dataset}_{result.model}.pkl"
+        path = output_dir / filename
+        with path.open("wb") as handle:
+            pickle.dump(result.estimator, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        if progress:
+            progress.advance(f"Saved model to {path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -664,6 +807,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(base_dir / "output" / "sleep_apnea_model_report.md"),
         help="Output markdown path.",
     )
+    parser.add_argument(
+        "--model-dir",
+        default=str(base_dir / "output" / "models"),
+        help="Directory to store trained model artifacts.",
+    )
     return parser
 
 
@@ -673,19 +821,86 @@ def main() -> int:
 
     model_specs = _build_model_specs(args.seed)
     total_candidates = sum(len(grid) for _, _, grid in model_specs)
-    total_steps = 2 + (2 * (total_candidates + len(model_specs))) + 1
+    model_count = len(model_specs) * 2
+    total_steps = 2 + 2 + (2 * (total_candidates + len(model_specs))) + 1 + 1 + model_count
     progress = ProgressReporter(total=total_steps)
 
     baseline = load_dataset("baseline", Path(args.baseline), progress=progress)
     biased = load_dataset("biased", Path(args.biased), progress=progress)
 
+    baseline_split = split_dataset(baseline, args.train_frac, args.val_frac, args.seed, progress=progress)
+    biased_split = split_dataset(biased, args.train_frac, args.val_frac, args.seed, progress=progress)
+
     results: List[ModelResult] = []
-    for dataset in [baseline, biased]:
-        results.extend(
-            train_models(
-                dataset, args.seed, args.train_frac, args.val_frac, progress=progress
-            )
+    results.extend(
+        train_models(
+            baseline,
+            args.seed,
+            args.train_frac,
+            args.val_frac,
+            split=baseline_split,
+            progress=progress,
         )
+    )
+    results.extend(
+        train_models(
+            biased,
+            args.seed,
+            args.train_frac,
+            args.val_frac,
+            split=biased_split,
+            progress=progress,
+        )
+    )
+
+    baseline_models = {result.model: result.estimator for result in results if result.dataset == "baseline"}
+    biased_models = {result.model: result.estimator for result in results if result.dataset == "biased"}
+
+    base_test_ids = baseline_split.X_test.index
+    biased_ids = pd.Index(biased.features.index)
+    overlap_ids = base_test_ids[base_test_ids.isin(biased_ids)]
+    biased_seen_ids = biased_split.X_train.index.append(biased_split.X_val.index)
+    filtered_ids = overlap_ids[~overlap_ids.isin(biased_seen_ids)]
+
+    dropped_not_in_biased = len(base_test_ids) - len(overlap_ids)
+    dropped_seen_in_biased = len(overlap_ids) - len(filtered_ids)
+
+    cross_results: List[CrossEvaluation] = []
+    cross_test_size = len(filtered_ids)
+    if cross_test_size > 0:
+        X_cross = baseline_split.X_test.loc[filtered_ids]
+        y_cross = baseline_split.y_test.loc[filtered_ids]
+        for model_name, biased_model in biased_models.items():
+            baseline_model = baseline_models.get(model_name)
+            if baseline_model is None:
+                continue
+            baseline_probs = baseline_model.predict_proba(X_cross)[:, 1].tolist()
+            biased_probs = biased_model.predict_proba(X_cross)[:, 1].tolist()
+            baseline_metrics = _evaluate(y_cross, baseline_probs)
+            biased_metrics = _evaluate(y_cross, biased_probs)
+            deltas = {
+                key: biased_metrics[key] - baseline_metrics[key]
+                for key in baseline_metrics
+            }
+            cross_results.append(
+                CrossEvaluation(
+                    model=model_name,
+                    baseline_metrics=baseline_metrics,
+                    biased_metrics=biased_metrics,
+                    deltas=deltas,
+                )
+            )
+
+    cross_note = (
+        "Baseline test set filtered to overlap with biased dataset IDs, then removed any IDs seen in biased "
+        "train/val splits to avoid repeats. "
+        f"Baseline test N={len(base_test_ids):,}; "
+        f"overlap N={len(overlap_ids):,}; "
+        f"removed-not-in-biased N={dropped_not_in_biased:,}; "
+        f"removed-seen-in-biased N={dropped_seen_in_biased:,}."
+    )
+    if progress:
+        progress.advance("Cross-dataset evaluation complete")
 
     write_report(
         Path(args.out),
@@ -693,8 +908,12 @@ def main() -> int:
         results,
         args.train_frac,
         args.val_frac,
+        cross_results,
+        cross_note,
+        cross_test_size,
         progress=progress,
     )
+    save_models(Path(args.model_dir), results, progress=progress)
     print(f"Wrote report to {args.out}")
     return 0
 

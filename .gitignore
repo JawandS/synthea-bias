@@ -1,3 +1,6 @@
 # Python generates files
 __pycache__/
 .venv/
+
+# output files
+sleep_apnea/output/models/
