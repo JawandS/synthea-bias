@@ -5,9 +5,9 @@ in synthetic patient data. We compare a baseline Synthea simulation against a bi
 where rural patients experience higher dropout rates in the sleep apnea care pathway.
 
 ## Technical overview
-- `load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
-- `summary_stats.py`: provides summary statistics on the datasets (should be very similar)
-- `models.py`: trains logistic regression, random forest, and gradient boosted decision tree models to predict sleep apnea diagnosis using the defined features. Implements train/test/validate split and hyperparameter tuning.
+- `scripts/load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
+- `scripts/summary_stats.py`: provides summary statistics on the datasets (should be very similar).
+- `scripts/models.py`: trains logistic regression, random forest, and gradient boosted decision tree models to predict sleep apnea diagnosis using the defined features. Implements train/test/validate split and hyperparameter tuning, and writes a markdown report to `sleep_apnea/output`.
 
 ## Data Generation
 
@@ -103,20 +103,29 @@ This creates a biased dataset where:
 - Urban patients continue to receive full care
 - The resulting data reflects lower sleep apnea diagnosis rates in rural populations
 
-## Feature Definitions
+## Model, Features, Target
 
-The demand model uses the following features (intentionally excluding urban/rural):
+### Models
+The classifier suite in `scripts/models.py` trains three model families per dataset:
+- Logistic regression (with standardized inputs).
+- Random forest classifier.
+- Gradient boosted decision tree classifier.
+
+Hyperparameters are selected by validation AUC, and final test metrics include AUC, average precision, and Brier score.
+Train/val/test default split is 70/15/15.
+
+### Features (no urban/rural)
 
 | Feature | Source | Description |
 |---------|--------|-------------|
-| `age_years` | `patients.csv` | Patient age at dataset end date |
+| `age_years` | `patients.csv` | Patient age at dataset reference date (latest birth/death date in file) |
 | `male` | `patients.csv` | Gender indicator (1.0 for male) |
 | `income` | `patients.csv` | Annual household income |
 | `bmi` | `observations.csv` | Latest recorded BMI (LOINC 39156-5) |
-| `smoker` | `observations.csv` | Current smoker (LOINC 72166-2) |
+| `smoker` | `observations.csv` | Latest smoking status (LOINC 72166-2) |
 | `alcohol_use` | `conditions.csv` | Alcohol use disorder diagnosis (SNOMED 7200002) |
 | `hypertension` | `conditions.csv` | Hypertension diagnosis (SNOMED 59621000) |
 | `chf` | `conditions.csv` | Congestive heart failure (SNOMED 88805009) |
 
-## Target Definition
-If the individual has been diagnosed with sleep apnea during the simulation.
+### Target
+Binary label: patient has a sleep apnea diagnosis (SNOMED 73430006 or 78275009) in `conditions.csv`.
