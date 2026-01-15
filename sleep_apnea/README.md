@@ -8,6 +8,7 @@ where rural patients experience higher dropout rates in the sleep apnea care pat
 - `scripts/load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
 - `scripts/summary_stats.py`: provides summary statistics on the datasets (should be very similar).
 - `scripts/models.py`: trains logistic regression, random forest, and gradient boosted decision tree models to predict sleep apnea diagnosis using the defined features. Implements train/test/validate split and hyperparameter tuning, and writes a markdown report to `sleep_apnea/output`.
+- `scripts/analytics.py`: estimates rural misdiagnosis effects using a pairwise rural/urban comparison and an adjusted logistic regression, writing a report to `sleep_apnea/output`.
 
 ## Data Generation
 
