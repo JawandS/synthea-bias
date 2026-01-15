@@ -6,9 +6,9 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from sklearn.base import clone
@@ -109,6 +109,34 @@ class ModelResult:
     params: Dict[str, object]
 
 
+@dataclass
+class ProgressReporter:
+    total: int
+    current: int = 0
+    bar_width: int = 28
+
+    def _timestamp(self) -> str:
+        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _render_bar(self) -> str:
+        if self.total <= 0:
+            return "[" + "-" * self.bar_width + "]"
+        ratio = min(max(self.current / self.total, 0.0), 1.0)
+        filled = int(round(self.bar_width * ratio))
+        return "[" + "#" * filled + "-" * (self.bar_width - filled) + "]"
+
+    def log(self, message: str) -> None:
+        print(f"[{self._timestamp()}] [{self.current:>4}/{self.total:<4}] {message}")
+
+    def advance(self, message: Optional[str] = None, step: int = 1) -> None:
+        self.current = min(self.total, self.current + step)
+        prefix = f"[{self._timestamp()}] [{self.current:>4}/{self.total:<4}] {self._render_bar()}"
+        if message:
+            print(f"{prefix} {message}")
+        else:
+            print(prefix)
+
+
 def _has_header(path: Path, expected_headers: Sequence[str]) -> bool:
     if not path.exists():
         return False
@@ -167,7 +195,7 @@ def _latest_observation(
     value_col: str,
     date_col: Optional[str],
     code: str,
-    value_parser,
+    value_parser: Callable[[object], Optional[float]],
 ) -> Dict[str, float]:
     subset = observations[observations[code_col] == code].copy()
     if subset.empty:
@@ -180,13 +208,20 @@ def _latest_observation(
     parsed_values = pd.to_numeric(parsed_values, errors="coerce")
     latest = latest.assign(parsed_value=parsed_values)
     latest = latest.dropna(subset=["parsed_value"])
-    return dict(zip(latest[patient_col], latest["parsed_value"]))
+    return {
+        str(patient_id): float(value)
+        for patient_id, value in zip(latest[patient_col], latest["parsed_value"])
+    }
 
 
 def _parse_bmi(value: object) -> Optional[float]:
-    try:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
         return float(value)
-    except (TypeError, ValueError):
+    try:
+        return float(str(value).strip())
+    except ValueError:
         return None
 
 
@@ -297,10 +332,17 @@ def _build_feature_frame(
     return features, pd.Series(labels, index=features.index), prevalence
 
 
-def load_dataset(name: str, data_dir: Path) -> Dataset:
+def load_dataset(
+    name: str,
+    data_dir: Path,
+    progress: Optional[ProgressReporter] = None,
+) -> Dataset:
     patients_path = data_dir / "patients.csv"
     conditions_path = data_dir / "conditions.csv"
     observations_path = data_dir / "observations.csv"
+
+    if progress:
+        progress.log(f"Loading dataset '{name}' from {data_dir}")
 
     if not patients_path.exists():
         raise FileNotFoundError(f"Missing patients.csv at {patients_path}")
@@ -314,6 +356,11 @@ def load_dataset(name: str, data_dir: Path) -> Dataset:
     observations = _read_csv(observations_path, OBSERVATIONS_HEADERS)
 
     features, labels, prevalence = _build_feature_frame(patients, conditions, observations)
+
+    if progress:
+        progress.advance(
+            f"Loaded '{name}': {len(labels):,} patients, prevalence={_format_pct(prevalence)}"
+        )
 
     return Dataset(name=name, features=features, labels=labels, prevalence=prevalence)
 
@@ -350,7 +397,7 @@ def _split_data(
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
-def _evaluate(y_true: pd.Series, y_prob: List[float]) -> Dict[str, float]:
+def _evaluate(y_true: pd.Series, y_prob: Sequence[float]) -> Dict[str, float]:
     return {
         "auc": roc_auc_score(y_true, y_prob),
         "ap": average_precision_score(y_true, y_prob),
@@ -365,16 +412,21 @@ def _select_best_model(
     y_train: pd.Series,
     X_val: pd.DataFrame,
     y_val: pd.Series,
+    progress: Optional[ProgressReporter] = None,
 ) -> Tuple[Pipeline, Dict[str, object], Dict[str, float]]:
     best_score = -1.0
     best_params: Dict[str, object] = {}
     best_metrics: Dict[str, float] = {}
 
-    for params in param_grid:
+    if progress:
+        progress.log(f"Searching hyperparameters ({len(param_grid)} candidates)")
+    for idx, params in enumerate(param_grid, start=1):
+        if progress:
+            progress.advance(f"candidate {idx}/{len(param_grid)}")
         model = clone(pipeline)
         model.set_params(**params)
         model.fit(X_train, y_train)
-        probs = model.predict_proba(X_val)[:, 1]
+        probs = model.predict_proba(X_val)[:, 1].tolist()
         metrics = _evaluate(y_val, probs)
         score = metrics["auc"]
         if score > best_score:
@@ -382,11 +434,16 @@ def _select_best_model(
             best_params = params
             best_metrics = metrics
 
+    if progress:
+        progress.log(f"Selected best params: {best_params}")
+        progress.log("Retraining on train+val set")
     final_model = clone(pipeline)
     final_model.set_params(**best_params)
     X_train_val = pd.concat([X_train, X_val], axis=0)
     y_train_val = pd.concat([y_train, y_val], axis=0)
     final_model.fit(X_train_val, y_train_val)
+    if progress:
+        progress.log("Finished retraining final model")
     return final_model, best_params, best_metrics
 
 
@@ -458,7 +515,13 @@ def _build_model_specs(seed: int) -> List[Tuple[str, Pipeline, List[Dict[str, ob
     ]
 
 
-def train_models(dataset: Dataset, seed: int, train_frac: float, val_frac: float) -> List[ModelResult]:
+def train_models(
+    dataset: Dataset,
+    seed: int,
+    train_frac: float,
+    val_frac: float,
+    progress: Optional[ProgressReporter] = None,
+) -> List[ModelResult]:
     X_train, X_val, X_test, y_train, y_val, y_test = _split_data(
         dataset.features,
         dataset.labels,
@@ -469,12 +532,20 @@ def train_models(dataset: Dataset, seed: int, train_frac: float, val_frac: float
     split_sizes = (len(y_train), len(y_val), len(y_test))
 
     results: List[ModelResult] = []
+    if progress:
+        progress.log(f"Training on dataset '{dataset.name}' (seed={seed})")
     for name, pipeline, grid in _build_model_specs(seed):
+        if progress:
+            progress.log(f"Starting model '{name}'")
         model, params, _ = _select_best_model(
-            pipeline, grid, X_train, y_train, X_val, y_val
+            pipeline, grid, X_train, y_train, X_val, y_val, progress=progress
         )
-        probs = model.predict_proba(X_test)[:, 1]
+        probs = model.predict_proba(X_test)[:, 1].tolist()
         metrics = _evaluate(y_test, probs)
+        if progress:
+            progress.advance(
+                f"Finished model '{name}': auc={metrics['auc']:.3f}, ap={metrics['ap']:.3f}"
+            )
         results.append(
             ModelResult(
                 dataset=dataset.name,
@@ -501,6 +572,7 @@ def write_report(
     results: List[ModelResult],
     train_frac: float,
     val_frac: float,
+    progress: Optional[ProgressReporter] = None,
 ) -> None:
     lines: List[str] = []
     lines.append("# Sleep Apnea Diagnosis Model Report")
@@ -546,8 +618,12 @@ def write_report(
             lines.append(f"- **{result.model}**: {result.params}")
         lines.append("")
 
+    if progress:
+        progress.log(f"Writing report to {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
+    if progress:
+        progress.advance(f"Report written to {path}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -595,13 +671,20 @@ def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
 
-    baseline = load_dataset("baseline", Path(args.baseline))
-    biased = load_dataset("biased", Path(args.biased))
+    model_specs = _build_model_specs(args.seed)
+    total_candidates = sum(len(grid) for _, _, grid in model_specs)
+    total_steps = 2 + (2 * (total_candidates + len(model_specs))) + 1
+    progress = ProgressReporter(total=total_steps)
+
+    baseline = load_dataset("baseline", Path(args.baseline), progress=progress)
+    biased = load_dataset("biased", Path(args.biased), progress=progress)
 
     results: List[ModelResult] = []
     for dataset in [baseline, biased]:
         results.extend(
-            train_models(dataset, args.seed, args.train_frac, args.val_frac)
+            train_models(
+                dataset, args.seed, args.train_frac, args.val_frac, progress=progress
+            )
         )
 
     write_report(
@@ -610,6 +693,7 @@ def main() -> int:
         results,
         args.train_frac,
         args.val_frac,
+        progress=progress,
     )
     print(f"Wrote report to {args.out}")
     return 0
