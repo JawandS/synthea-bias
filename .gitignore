@@ -3,4 +3,4 @@ __pycache__/
 .venv/
 
 # output files
-sleep_apnea/output/models/
+*/output/models/

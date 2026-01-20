@@ -17,8 +17,8 @@
 
 - [x] `scripts/load_data.py` - copy/filter CSVs, handle headers
 - [x] `scripts/summary_stats.py` - dataset statistics
-- [ ] `scripts/models.py` - train logistic regression, random forest, and GBDT models
-- [ ] `scripts/analytics.py` - compare baseline vs biased performance
+- [x] `scripts/models.py` - train logistic regression, random forest, and GBDT models
+- [x] `scripts/analytics.py` - compare baseline vs biased performance
 
 ## Phase 4: Reports
 
