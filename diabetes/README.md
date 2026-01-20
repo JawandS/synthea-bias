@@ -32,7 +32,7 @@ The override file changes these to 70%/30% to introduce documentation bias.
 ./run_synthea -s 160 -cs 160 -o false -p 20000 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=true \
-  --exporter.baseDirectory=./output_baseline \
+  --exporter.baseDirectory=./output_baseline_documentation \
   Montana
 ```
 

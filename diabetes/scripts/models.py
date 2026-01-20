@@ -134,6 +134,15 @@ class CrossEvaluation:
 
 
 @dataclass
+class CohortStats:
+    baseline_original: int
+    biased_original: int
+    common_ids: int
+    baseline_dropped: int
+    biased_dropped: int
+
+
+@dataclass
 class ProgressReporter:
     total: int
     current: int = 0
@@ -619,6 +628,95 @@ def train_models(
     return results
 
 
+def filter_to_common_ids(
+    baseline: Dataset,
+    biased: Dataset,
+    progress: Optional[ProgressReporter] = None,
+) -> Tuple[Dataset, Dataset, CohortStats]:
+    """Filter both datasets to only include patient IDs present in both."""
+    baseline_ids = set(baseline.features.index)
+    biased_ids = set(biased.features.index)
+    common_ids = baseline_ids & biased_ids
+
+    stats = CohortStats(
+        baseline_original=len(baseline_ids),
+        biased_original=len(biased_ids),
+        common_ids=len(common_ids),
+        baseline_dropped=len(baseline_ids) - len(common_ids),
+        biased_dropped=len(biased_ids) - len(common_ids),
+    )
+
+    common_index = pd.Index(sorted(common_ids))
+
+    baseline_features = baseline.features.loc[common_index]
+    baseline_labels = baseline.labels.loc[common_index]
+    baseline_prevalence = float(baseline_labels.mean()) if len(baseline_labels) else 0.0
+
+    biased_features = biased.features.loc[common_index]
+    biased_labels = biased.labels.loc[common_index]
+    biased_prevalence = float(biased_labels.mean()) if len(biased_labels) else 0.0
+
+    if progress:
+        progress.advance(
+            f"Filtered to {len(common_ids):,} common IDs "
+            f"(dropped {stats.baseline_dropped:,} baseline, {stats.biased_dropped:,} biased)"
+        )
+
+    return (
+        Dataset(name=baseline.name, features=baseline_features, labels=baseline_labels, prevalence=baseline_prevalence),
+        Dataset(name=biased.name, features=biased_features, labels=biased_labels, prevalence=biased_prevalence),
+        stats,
+    )
+
+
+def split_by_ids(
+    baseline: Dataset,
+    biased: Dataset,
+    train_frac: float,
+    val_frac: float,
+    seed: int,
+    progress: Optional[ProgressReporter] = None,
+) -> Tuple[SplitData, SplitData]:
+    """Split both datasets using the same patient IDs for train/val/test."""
+    # Use baseline labels for stratification (same patients, same diabetes status)
+    X_train, X_val, X_test, y_train, y_val, y_test = _split_data(
+        baseline.features,
+        baseline.labels,
+        train_frac,
+        val_frac,
+        seed,
+    )
+
+    train_ids = X_train.index
+    val_ids = X_val.index
+    test_ids = X_test.index
+
+    baseline_split = SplitData(
+        X_train=baseline.features.loc[train_ids],
+        X_val=baseline.features.loc[val_ids],
+        X_test=baseline.features.loc[test_ids],
+        y_train=baseline.labels.loc[train_ids],
+        y_val=baseline.labels.loc[val_ids],
+        y_test=baseline.labels.loc[test_ids],
+    )
+
+    biased_split = SplitData(
+        X_train=biased.features.loc[train_ids],
+        X_val=biased.features.loc[val_ids],
+        X_test=biased.features.loc[test_ids],
+        y_train=biased.labels.loc[train_ids],
+        y_val=biased.labels.loc[val_ids],
+        y_test=biased.labels.loc[test_ids],
+    )
+
+    if progress:
+        progress.advance(
+            f"Split datasets: train={len(train_ids):,}, val={len(val_ids):,}, test={len(test_ids):,}"
+        )
+
+    return baseline_split, biased_split
+
+
 def _format_pct(value: float) -> str:
     return f"{value * 100:.2f}%"
 
@@ -634,8 +732,8 @@ def write_report(
     train_frac: float,
     val_frac: float,
     cross_results: List[CrossEvaluation],
-    cross_note: str,
     cross_test_size: int,
+    cohort_stats: CohortStats,
     progress: Optional[ProgressReporter] = None,
 ) -> None:
     lines: List[str] = []
@@ -654,6 +752,22 @@ def write_report(
         "Models are trained with validation-based hyperparameter selection, then re-fit on the combined "
         "train+validation split before final evaluation on the held-out test set."
     )
+    lines.append("")
+
+    lines.append("## Cohort Selection")
+    lines.append("")
+    lines.append(
+        "To ensure comparable results, both datasets are filtered to include only patient IDs that appear "
+        "in both baseline and biased datasets. The same train/val/test split is then applied to both."
+    )
+    lines.append("")
+    lines.append("| Metric | Count |")
+    lines.append("| --- | ---: |")
+    lines.append(f"| Baseline original patients | {cohort_stats.baseline_original:,} |")
+    lines.append(f"| Biased original patients | {cohort_stats.biased_original:,} |")
+    lines.append(f"| Common patient IDs (kept) | {cohort_stats.common_ids:,} |")
+    lines.append(f"| Baseline patients dropped | {cohort_stats.baseline_dropped:,} |")
+    lines.append(f"| Biased patients dropped | {cohort_stats.biased_dropped:,} |")
     lines.append("")
 
     lines.append("## Dataset Summary")
@@ -684,16 +798,12 @@ def write_report(
         )
     lines.append("")
 
-    lines.append("## Biased Model on Baseline Test Set")
+    lines.append("## Cross-Dataset Evaluation")
     lines.append("")
     lines.append(
-        "To quantify performance degradation, the biased-trained models are evaluated on the baseline test set. "
-        "We first restrict the baseline test cohort to patient IDs that also appear in the biased dataset, then "
-        "remove any IDs that were seen during biased train/validation to avoid repeats. This ensures the biased "
-        "models are evaluated only on unseen baseline patients."
+        "Both models are evaluated on the same held-out test set using baseline feature values. "
+        "This directly compares how training on biased vs baseline data affects predictions for identical patients."
     )
-    lines.append("")
-    lines.append(cross_note)
     lines.append("")
     if cross_results:
         lines.append("| Model | Baseline AUC | Biased AUC | Δ AUC | Baseline AP | Biased AP | Δ AP | Baseline Brier | Biased Brier | Δ Brier | Test N |")
@@ -837,15 +947,23 @@ def main() -> int:
     model_specs = _build_model_specs(args.seed)
     total_candidates = sum(len(grid) for _, _, grid in model_specs)
     model_count = len(model_specs) * 2
-    total_steps = 2 + 2 + (2 * (total_candidates + len(model_specs))) + 1 + 1 + model_count
+    # Steps: 2 load + 1 filter + 1 split + 2*(candidates + models) + 1 cross-eval + 1 report + model_count save
+    total_steps = 2 + 1 + 1 + (2 * (total_candidates + len(model_specs))) + 1 + 1 + model_count
     progress = ProgressReporter(total=total_steps)
 
-    baseline = load_dataset("baseline", Path(args.baseline), progress=progress)
-    biased = load_dataset("biased", Path(args.biased), progress=progress)
+    # Load both datasets
+    baseline_raw = load_dataset("baseline", Path(args.baseline), progress=progress)
+    biased_raw = load_dataset("biased", Path(args.biased), progress=progress)
 
-    baseline_split = split_dataset(baseline, args.train_frac, args.val_frac, args.seed, progress=progress)
-    biased_split = split_dataset(biased, args.train_frac, args.val_frac, args.seed, progress=progress)
+    # Filter to common patient IDs
+    baseline, biased, cohort_stats = filter_to_common_ids(baseline_raw, biased_raw, progress=progress)
 
+    # Split using the same patient IDs for both datasets
+    baseline_split, biased_split = split_by_ids(
+        baseline, biased, args.train_frac, args.val_frac, args.seed, progress=progress
+    )
+
+    # Train models on each dataset
     results: List[ModelResult] = []
     results.extend(
         train_models(
@@ -868,52 +986,38 @@ def main() -> int:
         )
     )
 
+    # Cross-evaluation: evaluate both models on baseline test features
     baseline_models = {result.model: result.estimator for result in results if result.dataset == "baseline"}
     biased_models = {result.model: result.estimator for result in results if result.dataset == "biased"}
 
-    base_test_ids = baseline_split.X_test.index
-    biased_ids = pd.Index(biased.features.index)
-    overlap_ids = base_test_ids[base_test_ids.isin(biased_ids)]
-    biased_seen_ids = biased_split.X_train.index.append(biased_split.X_val.index)
-    filtered_ids = overlap_ids[~overlap_ids.isin(biased_seen_ids)]
-
-    dropped_not_in_biased = len(base_test_ids) - len(overlap_ids)
-    dropped_seen_in_biased = len(overlap_ids) - len(filtered_ids)
-
     cross_results: List[CrossEvaluation] = []
-    cross_test_size = len(filtered_ids)
-    if cross_test_size > 0:
-        X_cross = baseline_split.X_test.loc[filtered_ids]
-        y_cross = baseline_split.y_test.loc[filtered_ids]
-        for model_name, biased_model in biased_models.items():
-            baseline_model = baseline_models.get(model_name)
-            if baseline_model is None:
-                continue
-            baseline_probs = baseline_model.predict_proba(X_cross)[:, 1].tolist()
-            biased_probs = biased_model.predict_proba(X_cross)[:, 1].tolist()
-            baseline_metrics = _evaluate(y_cross, baseline_probs)
-            biased_metrics = _evaluate(y_cross, biased_probs)
-            deltas = {
-                key: biased_metrics[key] - baseline_metrics[key]
-                for key in baseline_metrics
-            }
-            cross_results.append(
-                CrossEvaluation(
-                    model=model_name,
-                    baseline_metrics=baseline_metrics,
-                    biased_metrics=biased_metrics,
-                    deltas=deltas,
-                )
-            )
+    cross_test_size = len(baseline_split.X_test)
 
-    cross_note = (
-        "Baseline test set filtered to overlap with biased dataset IDs, then removed any IDs seen in biased "
-        "train/val splits to avoid repeats. "
-        f"Baseline test N={len(base_test_ids):,}; "
-        f"overlap N={len(overlap_ids):,}; "
-        f"removed-not-in-biased N={dropped_not_in_biased:,}; "
-        f"removed-seen-in-biased N={dropped_seen_in_biased:,}."
-    )
+    # Use baseline test features for both models (same patients, baseline feature values)
+    X_test = baseline_split.X_test
+    y_test = baseline_split.y_test
+
+    for model_name, biased_model in biased_models.items():
+        baseline_model = baseline_models.get(model_name)
+        if baseline_model is None:
+            continue
+        baseline_probs = baseline_model.predict_proba(X_test)[:, 1].tolist()
+        biased_probs = biased_model.predict_proba(X_test)[:, 1].tolist()
+        baseline_metrics = _evaluate(y_test, baseline_probs)
+        biased_metrics = _evaluate(y_test, biased_probs)
+        deltas = {
+            key: biased_metrics[key] - baseline_metrics[key]
+            for key in baseline_metrics
+        }
+        cross_results.append(
+            CrossEvaluation(
+                model=model_name,
+                baseline_metrics=baseline_metrics,
+                biased_metrics=biased_metrics,
+                deltas=deltas,
+            )
+        )
+
     if progress:
         progress.advance("Cross-dataset evaluation complete")
 
@@ -924,8 +1028,8 @@ def main() -> int:
         args.train_frac,
         args.val_frac,
         cross_results,
-        cross_note,
         cross_test_size,
+        cohort_stats,
         progress=progress,
     )
     save_models(Path(args.model_dir), results, progress=progress)

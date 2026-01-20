@@ -6,7 +6,7 @@ This report analyzes the effects of documentation bias on diabetes-related featu
 
 | Dataset | Patients | Diabetes | Hyperglycemia | Hypertriglyceridemia |
 | --- | ---: | ---: | ---: | ---: |
-| baseline | 20,106 | 1,268 | 609 | 1,217 |
+| baseline | 20,000 | 1,253 | 595 | 1,223 |
 | biased | 20,000 | 1,257 | 476 | 1,112 |
 
 ## Documentation Rate Comparison
@@ -15,8 +15,8 @@ Documentation rates for the metabolic conditions affected by the bias interventi
 
 | Condition | Baseline Rate | Biased Rate | Reduction |
 | --- | ---: | ---: | ---: |
-| Hyperglycemia | 3.03% | 2.38% | 21.42% |
-| Hypertriglyceridemia | 6.05% | 5.56% | 8.14% |
+| Hyperglycemia | 2.97% | 2.38% | 20.00% |
+| Hypertriglyceridemia | 6.12% | 5.56% | 9.08% |
 
 ## Documentation Among Diabetes Patients
 
@@ -24,8 +24,8 @@ Among patients with a diabetes diagnosis, the rate of documented metabolic condi
 
 | Condition | Baseline Rate | Biased Rate |
 | --- | ---: | ---: |
-| Hyperglycemia | 48.03% | 37.87% |
-| Hypertriglyceridemia | 95.27% | 87.11% |
+| Hyperglycemia | 47.49% | 37.87% |
+| Hypertriglyceridemia | 95.85% | 87.11% |
 
 ## Logistic Regression Coefficients
 
@@ -33,22 +33,22 @@ Logistic regression coefficients (standardized) for predicting diabetes. Higher 
 
 | Feature | Baseline Coef | Baseline OR | Biased Coef | Biased OR | Δ Coef |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| age_years | 0.410 | 1.506 | 0.404 | 1.498 | -0.005 |
-| male | -0.014 | 0.986 | -0.003 | 0.997 | +0.011 |
-| income | -0.073 | 0.930 | 0.071 | 1.074 | +0.144 |
-| bmi | 0.571 | 1.771 | 0.459 | 1.583 | -0.112 |
-| smoker | -0.195 | 0.823 | -0.214 | 0.807 | -0.020 |
-| obesity | -0.179 | 0.836 | 0.449 | 1.567 | +0.628 |
-| hypertension | 0.070 | 1.072 | 0.166 | 1.180 | +0.096 |
-| hyperlipidemia | -0.127 | 0.880 | 0.042 | 1.043 | +0.169 |
-| hyperglycemia | 0.702 | 2.019 | 1.438 | 4.212 | +0.736 |
-| hypertriglyceridemia | 2.290 | 9.871 | 2.001 | 7.395 | -0.289 |
+| age_years | 0.216 | 1.241 | 0.404 | 1.498 | +0.188 |
+| male | 0.001 | 1.001 | -0.003 | 0.997 | -0.004 |
+| income | 0.135 | 1.145 | 0.071 | 1.074 | -0.064 |
+| bmi | 0.531 | 1.700 | 0.459 | 1.583 | -0.071 |
+| smoker | -0.106 | 0.899 | -0.214 | 0.807 | -0.108 |
+| obesity | 0.319 | 1.376 | 0.449 | 1.567 | +0.130 |
+| hypertension | 0.027 | 1.027 | 0.166 | 1.180 | +0.139 |
+| hyperlipidemia | 0.058 | 1.060 | 0.042 | 1.043 | -0.017 |
+| hyperglycemia | 0.906 | 2.475 | 1.438 | 4.212 | +0.532 |
+| hypertriglyceridemia | 2.178 | 8.826 | 2.001 | 7.395 | -0.177 |
 
 ## In-Sample Model Performance
 
 | Dataset | AUC |
 | --- | ---: |
-| baseline | 0.984 |
+| baseline | 0.988 |
 | biased | 0.982 |
 
 ## Interpretation

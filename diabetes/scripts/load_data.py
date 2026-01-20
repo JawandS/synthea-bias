@@ -117,7 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--baseline",
-        default=str(repo_root / "snythea" / "output_baseline"),
+        default=str(repo_root / "snythea" / "output_baseline_documentation"),
         help="Path to baseline Synthea output (root or csv directory).",
     )
     parser.add_argument(
