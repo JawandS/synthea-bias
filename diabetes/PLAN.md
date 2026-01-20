@@ -17,7 +17,7 @@
 
 - [x] `scripts/load_data.py` - copy/filter CSVs, handle headers
 - [x] `scripts/summary_stats.py` - dataset statistics
-- [ ] `scripts/models.py` - train models with feature sets (demographics, risk basic, risk+comorbidities, risk+metabolic)
+- [ ] `scripts/models.py` - train logistic regression, random forest, and GBDT models
 - [ ] `scripts/analytics.py` - compare baseline vs biased performance
 
 ## Phase 4: Reports

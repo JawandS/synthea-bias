@@ -82,13 +82,22 @@ In the baseline, these conditions are always recorded when clinical criteria are
 The override modifies the `Blood_Sugar_Check` and `Triglyceride_Check` state transitions
 to skip recording 30% of the time, regardless of patient characteristics.
 
-## Model Features and Target
+## Model, Features, Target
+
+### Models
+The classifier suite in `scripts/models.py` trains three model families per dataset:
+- Logistic regression (with standardized inputs).
+- Random forest classifier.
+- Gradient boosted decision tree classifier.
+
+Hyperparameters are selected by validation AUC, and final test metrics include AUC, average precision, and Brier score.
+Train/val/test default split is 70/15/15.
 
 ### Features
 
 | Feature | Source | Description |
 |---------|--------|-------------|
-| `age_years` | `patients.csv` | Patient age at dataset reference date |
+| `age_years` | `patients.csv` | Patient age at dataset reference date (latest birth/death date in file) |
 | `male` | `patients.csv` | Gender indicator (1.0 for male) |
 | `income` | `patients.csv` | Annual household income |
 | `bmi` | `observations.csv` | Latest recorded BMI (LOINC 39156-5) |
@@ -98,13 +107,6 @@ to skip recording 30% of the time, regardless of patient characteristics.
 | `hyperlipidemia` | `conditions.csv` | Hyperlipidemia diagnosis |
 | `hyperglycemia` | `conditions.csv` | Hyperglycemia diagnosis (SNOMED 80394007) |
 | `hypertriglyceridemia` | `conditions.csv` | Hypertriglyceridemia diagnosis (SNOMED 302870006) |
-
-### Feature Sets
-
-- **Demographics**: age_years, male, income
-- **Risk basic**: age_years, male, income, bmi, smoker
-- **Risk + comorbidities**: + obesity, hypertension, hyperlipidemia
-- **Risk + metabolic**: + hyperglycemia, hypertriglyceridemia
 
 ### Target
 
