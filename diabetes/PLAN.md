@@ -1,0 +1,45 @@
+# Diabetes Case Study: Implementation Plan
+
+## Phase 1: Data Generation
+
+- [ ] Generate baseline dataset (20k patients, Montana, seed 160)
+- [ ] Verify baseline diabetes prevalence (~6.31%)
+
+## Phase 2: Module Override
+
+- [ ] Analyze `metabolic_syndrome_care.json` states for Hyperglycemia and Hypertriglyceridemia
+- [ ] Create `artifacts/overrides_documentation_bias.properties` with 30% random skip rate for both conditions
+- [ ] Generate biased dataset with override
+
+## Phase 3: Scripts
+
+- [ ] `scripts/load_data.py` - copy/filter CSVs, handle headers
+- [ ] `scripts/summary_stats.py` - dataset statistics
+- [ ] `scripts/models.py` - train models with feature sets (demographics, risk basic, risk+comorbidities, risk+metabolic)
+- [ ] `scripts/analytics.py` - compare baseline vs biased performance
+
+## Phase 4: Reports
+
+- [ ] `output/diabetes_model_report.md`
+- [ ] `output/diabetes_analytics_report.md`
+- [ ] Update README.md with results
+
+## Directory Structure
+
+```
+diabetes/
+├── PLAN.md
+├── README.md
+├── pyproject.toml
+├── artifacts/
+│   └── overrides_documentation_bias.properties
+├── scripts/
+│   ├── load_data.py
+│   ├── summary_stats.py
+│   ├── models.py
+│   └── analytics.py
+├── data/
+│   ├── baseline/
+│   └── biased/
+└── output/
+```
