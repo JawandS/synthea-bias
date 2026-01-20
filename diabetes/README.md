@@ -15,6 +15,18 @@ We compare a baseline Synthea simulation against a biased version where metaboli
 
 Use Montana for consistency with the sleep apnea case study.
 
+### Module Setup
+
+Before generating the biased dataset, install the modified module that supports override-based bias:
+```bash
+# From snythea directory
+cp ../diabetes/artifacts/metabolic_syndrome_care_biased.json \
+   src/main/resources/modules/metabolic_syndrome_care.json
+```
+
+The modified module uses `complex_transition` with 100%/0% distributions (identical behavior to original).
+The override file changes these to 70%/30% to introduce documentation bias.
+
 ### Baseline Dataset
 ```bash
 ./run_synthea -s 160 -cs 160 -o false -p 20000 \
@@ -57,12 +69,18 @@ such data may:
 
 ### Module Modifications
 
+The `artifacts/` directory contains:
+- `base_metabolic_syndrome_care.json` - original Synthea module (reference)
+- `metabolic_syndrome_care_biased.json` - modified module with `complex_transition` (100%/0% distributions)
+- `overrides_documentation_bias.properties` - changes distributions to 70%/30%
+
 The biased dataset introduces 30% random under-documentation of:
 - **Hyperglycemia** (SNOMED 80394007)
 - **Hypertriglyceridemia** (SNOMED 302870006)
 
-In the baseline module, these conditions are always recorded when clinical criteria are met.
-The override modifies transitions to skip recording 30% of the time, regardless of patient characteristics.
+In the baseline, these conditions are always recorded when clinical criteria are met.
+The override modifies the `Blood_Sugar_Check` and `Triglyceride_Check` state transitions
+to skip recording 30% of the time, regardless of patient characteristics.
 
 ## Model Features and Target
 

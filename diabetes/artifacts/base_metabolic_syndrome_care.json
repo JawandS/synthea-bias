@@ -1,10 +1,6 @@
 {
   "name": "Metabolic Syndrome Standards of Care",
-  "remarks": [
-    "Modified for documentation bias case study.",
-    "Blood_Sugar_Check and Triglyceride_Check use complex_transition with distributions.",
-    "Default: 100% documentation rate. Use override file to introduce bias."
-  ],
+  "remarks": [],
   "states": {
     "Initial": {
       "type": "Initial",
@@ -61,27 +57,15 @@
     },
     "Blood_Sugar_Check": {
       "type": "Simple",
-      "remarks": [
-        "Uses complex_transition to allow override-based documentation bias"
-      ],
-      "complex_transition": [
+      "conditional_transition": [
         {
+          "transition": "Hyperglycemia",
           "condition": {
             "condition_type": "Vital Sign",
             "vital_sign": "Glucose",
             "operator": ">=",
             "value": 130
-          },
-          "distributions": [
-            {
-              "distribution": 1.0,
-              "transition": "Hyperglycemia"
-            },
-            {
-              "distribution": 0.0,
-              "transition": "Triglyceride_Check"
-            }
-          ]
+          }
         },
         {
           "transition": "Triglyceride_Check"
@@ -102,27 +86,15 @@
     },
     "Triglyceride_Check": {
       "type": "Simple",
-      "remarks": [
-        "Uses complex_transition to allow override-based documentation bias"
-      ],
-      "complex_transition": [
+      "conditional_transition": [
         {
+          "transition": "Hypertriglyceridemia",
           "condition": {
             "condition_type": "Vital Sign",
             "vital_sign": "Triglycerides",
             "operator": ">=",
             "value": 150
-          },
-          "distributions": [
-            {
-              "distribution": 1.0,
-              "transition": "Hypertriglyceridemia"
-            },
-            {
-              "distribution": 0.0,
-              "transition": "Metabolic_Check"
-            }
-          ]
+          }
         },
         {
           "transition": "Metabolic_Check"

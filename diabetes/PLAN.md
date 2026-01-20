@@ -7,8 +7,10 @@
 
 ## Phase 2: Module Override
 
-- [ ] Analyze `metabolic_syndrome_care.json` states for Hyperglycemia and Hypertriglyceridemia
-- [ ] Create `artifacts/overrides_documentation_bias.properties` with 30% random skip rate for both conditions
+- [x] Analyze `metabolic_syndrome_care.json` states for Hyperglycemia and Hypertriglyceridemia
+- [x] Save original module to `artifacts/base_metabolic_syndrome_care.json`
+- [x] Create modified module `artifacts/metabolic_syndrome_care_biased.json` with complex_transition (100%/0%)
+- [x] Create `artifacts/overrides_documentation_bias.properties` with 30% random skip rate
 - [ ] Generate biased dataset with override
 
 ## Phase 3: Scripts
@@ -32,6 +34,8 @@ diabetes/
 ├── README.md
 ├── pyproject.toml
 ├── artifacts/
+│   ├── base_metabolic_syndrome_care.json
+│   ├── metabolic_syndrome_care_biased.json
 │   └── overrides_documentation_bias.properties
 ├── scripts/
 │   ├── load_data.py
