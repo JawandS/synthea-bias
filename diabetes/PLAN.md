@@ -2,8 +2,8 @@
 
 ## Phase 1: Data Generation
 
-- [ ] Generate baseline dataset (20k patients, Montana, seed 160)
-- [ ] Verify baseline diabetes prevalence (~6.31%)
+- [x] Generate baseline dataset (20k patients, Montana, seed 160)
+- [x] Verify baseline diabetes prevalence (~6.31%)
 
 ## Phase 2: Module Override
 
@@ -13,8 +13,8 @@
 
 ## Phase 3: Scripts
 
-- [ ] `scripts/load_data.py` - copy/filter CSVs, handle headers
-- [ ] `scripts/summary_stats.py` - dataset statistics
+- [x] `scripts/load_data.py` - copy/filter CSVs, handle headers
+- [x] `scripts/summary_stats.py` - dataset statistics
 - [ ] `scripts/models.py` - train models with feature sets (demographics, risk basic, risk+comorbidities, risk+metabolic)
 - [ ] `scripts/analytics.py` - compare baseline vs biased performance
 
