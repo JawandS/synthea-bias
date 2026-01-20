@@ -23,7 +23,7 @@ A1C_CODE = "4548-4"
 BMI_CODE = "39156-5"
 SMOKING_STATUS_CODE = "72166-2"
 SMOKER_VALUES = {"smokes tobacco daily (finding)"}
-NON_SMOKER_VALUES = {"ex-smoker (finding)", "never smoked tobacco (finding)"}
+NON_SMOKER_VALUES = {"ex-smoker (finding)", "former smoker (finding)", "never smoked tobacco (finding)"}
 
 
 def resolve_csv_dir(path: Path) -> Path:
