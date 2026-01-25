@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze rural effects on sleep apnea misdiagnosis."""
+"""Analyze rural effects on sleep apnea under diagnosis."""
 
 from __future__ import annotations
 
@@ -511,17 +511,17 @@ def write_report(
     n_perm: int,
 ) -> None:
     lines: List[str] = []
-    lines.append("# Rural Misdiagnosis Analysis")
+    lines.append("# Rural Under Diagnosis Analysis")
     lines.append("")
     lines.append(
-        "Misdiagnosis is defined as a sleep disorder diagnosis without a corresponding sleep apnea diagnosis "
+        "Under diagnosis is defined as a sleep disorder diagnosis without a corresponding sleep apnea diagnosis "
         "(SLEEP_DISORDER_CODE 39898005 without SNOMED 73430006/78275009)."
     )
     lines.append("")
 
     lines.append("## Cohort Summary (Sleep Disorder Patients)")
     lines.append("")
-    lines.append("| Dataset | Cohort N | Sleep Apnea | Misdiagnosed | Rural | Urban | Missing Rural |")
+    lines.append("| Dataset | Cohort N | Sleep Apnea | Under Diagnosed | Rural | Urban | Missing Rural |")
     lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for dataset in datasets:
         lines.append(
@@ -592,7 +592,7 @@ def write_report(
     lines.append("")
     lines.append(
         "If rural coefficients are positive with low permutation p-values, rural residence is associated with a "
-        "higher chance of misdiagnosis after adjusting for clinical risk factors. The pairwise comparison provides "
+        "higher chance of under diagnosis after adjusting for clinical risk factors. The pairwise comparison provides "
         "a direct rate difference, while the regression isolates the rural effect conditional on covariates."
     )
     lines.append("")
@@ -603,7 +603,7 @@ def write_report(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Analyze rural effects on sleep apnea misdiagnosis."
+        description="Analyze rural effects on sleep apnea under diagnosis."
     )
     base_dir = Path(__file__).resolve().parent.parent
     parser.add_argument(
