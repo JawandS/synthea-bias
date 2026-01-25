@@ -106,6 +106,7 @@ class Dataset:
     rural_count: int
     urban_count: int
     missing_rural: int
+    full_population: Optional[pd.DataFrame] = None
 
 
 @dataclass
@@ -127,6 +128,23 @@ class RegressionStats:
     rural_p_value: Optional[float]
     auc: Optional[float]
     n: int
+
+
+@dataclass
+class SummaryStats:
+    """Summary statistics for a population subset."""
+    n: int
+    age_mean: Optional[float]
+    age_std: Optional[float]
+    male_pct: Optional[float]
+    income_mean: Optional[float]
+    income_std: Optional[float]
+    bmi_mean: Optional[float]
+    bmi_std: Optional[float]
+    smoker_pct: Optional[float]
+    alcohol_pct: Optional[float]
+    hypertension_pct: Optional[float]
+    chf_pct: Optional[float]
 
 
 def _has_header(path: Path, expected_headers: Sequence[str]) -> bool:
@@ -355,6 +373,7 @@ def _build_feature_frame(
         rural_count=rural_count,
         urban_count=urban_count,
         missing_rural=missing_rural,
+        full_population=features,
     )
     return cohort, pd.Series(labels, index=cohort.index), dataset
 
@@ -503,11 +522,60 @@ def _format_ratio(value: Optional[float]) -> str:
     return f"{value:.2f}"
 
 
+def _format_mean_std(mean: Optional[float], std: Optional[float]) -> str:
+    if mean is None:
+        return "n/a"
+    if std is None:
+        return f"{mean:.1f}"
+    return f"{mean:.1f} ± {std:.1f}"
+
+
+def compute_summary_stats(features: pd.DataFrame, mask: Optional[pd.Series] = None) -> SummaryStats:
+    """Compute summary statistics for a population subset."""
+    if mask is not None:
+        subset = features[mask]
+    else:
+        subset = features
+
+    n = len(subset)
+    if n == 0:
+        return SummaryStats(
+            n=0, age_mean=None, age_std=None, male_pct=None,
+            income_mean=None, income_std=None, bmi_mean=None, bmi_std=None,
+            smoker_pct=None, alcohol_pct=None, hypertension_pct=None, chf_pct=None,
+        )
+
+    age = subset["age_years"].dropna()
+    male = subset["male"].dropna()
+    income = subset["income"].dropna()
+    bmi = subset["bmi"].dropna()
+    smoker = subset["smoker"].dropna()
+    alcohol = subset["alcohol_use"].dropna()
+    hypertension = subset["hypertension"].dropna()
+    chf = subset["chf"].dropna()
+
+    return SummaryStats(
+        n=n,
+        age_mean=float(age.mean()) if len(age) > 0 else None,
+        age_std=float(age.std()) if len(age) > 1 else None,
+        male_pct=float(male.mean()) if len(male) > 0 else None,
+        income_mean=float(income.mean()) if len(income) > 0 else None,
+        income_std=float(income.std()) if len(income) > 1 else None,
+        bmi_mean=float(bmi.mean()) if len(bmi) > 0 else None,
+        bmi_std=float(bmi.std()) if len(bmi) > 1 else None,
+        smoker_pct=float(smoker.mean()) if len(smoker) > 0 else None,
+        alcohol_pct=float(alcohol.mean()) if len(alcohol) > 0 else None,
+        hypertension_pct=float(hypertension.mean()) if len(hypertension) > 0 else None,
+        chf_pct=float(chf.mean()) if len(chf) > 0 else None,
+    )
+
+
 def write_report(
     path: Path,
     datasets: List[Dataset],
     pairwise: Dict[str, PairwiseStats],
     regressions: Dict[str, RegressionStats],
+    population_stats: Dict[str, Dict[str, SummaryStats]],
     n_perm: int,
 ) -> None:
     lines: List[str] = []
@@ -519,28 +587,142 @@ def write_report(
     )
     lines.append("")
 
+    # Population Summary Statistics table
+    lines.append("## Population Summary Statistics (Full Population)")
+    lines.append("")
+    lines.append(
+        "Summary statistics for the full patient population, stratified by rural/urban residence and dataset."
+    )
+    lines.append("")
+
+    # Build column headers dynamically from datasets
+    col_headers = []
+    for dataset in datasets:
+        col_headers.extend([f"{dataset.name} Urban", f"{dataset.name} Rural"])
+    header_row = "| Characteristic | " + " | ".join(col_headers) + " |"
+    separator_row = "| --- |" + " ---: |" * len(col_headers)
+    lines.append(header_row)
+    lines.append(separator_row)
+
+    # Helper to get stats for a dataset/residence combo
+    def get_stat(dataset_name: str, residence: str) -> SummaryStats:
+        return population_stats.get(dataset_name, {}).get(residence, SummaryStats(
+            n=0, age_mean=None, age_std=None, male_pct=None,
+            income_mean=None, income_std=None, bmi_mean=None, bmi_std=None,
+            smoker_pct=None, alcohol_pct=None, hypertension_pct=None, chf_pct=None,
+        ))
+
+    # N row
+    n_cells = []
+    for dataset in datasets:
+        n_cells.append(f"{get_stat(dataset.name, 'urban').n:,}")
+        n_cells.append(f"{get_stat(dataset.name, 'rural').n:,}")
+    lines.append("| N | " + " | ".join(n_cells) + " |")
+
+    # Age row
+    age_cells = []
+    for dataset in datasets:
+        s = get_stat(dataset.name, "urban")
+        age_cells.append(_format_mean_std(s.age_mean, s.age_std))
+        s = get_stat(dataset.name, "rural")
+        age_cells.append(_format_mean_std(s.age_mean, s.age_std))
+    lines.append("| Age (years) | " + " | ".join(age_cells) + " |")
+
+    # Male % row
+    male_cells = []
+    for dataset in datasets:
+        male_cells.append(_format_pct(get_stat(dataset.name, "urban").male_pct))
+        male_cells.append(_format_pct(get_stat(dataset.name, "rural").male_pct))
+    lines.append("| Male (%) | " + " | ".join(male_cells) + " |")
+
+    # Income row
+    income_cells = []
+    for dataset in datasets:
+        s = get_stat(dataset.name, "urban")
+        income_cells.append(_format_mean_std(s.income_mean, s.income_std))
+        s = get_stat(dataset.name, "rural")
+        income_cells.append(_format_mean_std(s.income_mean, s.income_std))
+    lines.append("| Income ($) | " + " | ".join(income_cells) + " |")
+
+    # BMI row
+    bmi_cells = []
+    for dataset in datasets:
+        s = get_stat(dataset.name, "urban")
+        bmi_cells.append(_format_mean_std(s.bmi_mean, s.bmi_std))
+        s = get_stat(dataset.name, "rural")
+        bmi_cells.append(_format_mean_std(s.bmi_mean, s.bmi_std))
+    lines.append("| BMI | " + " | ".join(bmi_cells) + " |")
+
+    # Smoker % row
+    smoker_cells = []
+    for dataset in datasets:
+        smoker_cells.append(_format_pct(get_stat(dataset.name, "urban").smoker_pct))
+        smoker_cells.append(_format_pct(get_stat(dataset.name, "rural").smoker_pct))
+    lines.append("| Current Smoker (%) | " + " | ".join(smoker_cells) + " |")
+
+    # Alcohol use % row
+    alcohol_cells = []
+    for dataset in datasets:
+        alcohol_cells.append(_format_pct(get_stat(dataset.name, "urban").alcohol_pct))
+        alcohol_cells.append(_format_pct(get_stat(dataset.name, "rural").alcohol_pct))
+    lines.append("| Alcohol Use Disorder (%) | " + " | ".join(alcohol_cells) + " |")
+
+    # Hypertension % row
+    hypertension_cells = []
+    for dataset in datasets:
+        hypertension_cells.append(_format_pct(get_stat(dataset.name, "urban").hypertension_pct))
+        hypertension_cells.append(_format_pct(get_stat(dataset.name, "rural").hypertension_pct))
+    lines.append("| Hypertension (%) | " + " | ".join(hypertension_cells) + " |")
+
+    # CHF % row
+    chf_cells = []
+    for dataset in datasets:
+        chf_cells.append(_format_pct(get_stat(dataset.name, "urban").chf_pct))
+        chf_cells.append(_format_pct(get_stat(dataset.name, "rural").chf_pct))
+    lines.append("| CHF (%) | " + " | ".join(chf_cells) + " |")
+
+    lines.append("")
+
     lines.append("## Cohort Summary (Sleep Disorder Patients)")
     lines.append("")
-    lines.append("| Dataset | Cohort N | Sleep Apnea | Under Diagnosed | Rural | Urban | Missing Rural |")
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    has_missing_rural = any(d.missing_rural > 0 for d in datasets)
+    if has_missing_rural:
+        lines.append("| Dataset | Cohort N | Sleep Apnea | Under Diagnosed | Rural | Urban | Missing Rural |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    else:
+        lines.append("| Dataset | Cohort N | Sleep Apnea | Under Diagnosed | Rural | Urban |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
     for dataset in datasets:
-        lines.append(
-            "| {name} | {n:,} | {apnea:,} | {dropout:,} | {rural:,} | {urban:,} | {missing:,} |".format(
-                name=dataset.name,
-                n=dataset.cohort_size,
-                apnea=dataset.sleep_apnea_count,
-                dropout=dataset.dropout_count,
-                rural=dataset.rural_count,
-                urban=dataset.urban_count,
-                missing=dataset.missing_rural,
+        if has_missing_rural:
+            lines.append(
+                "| {name} | {n:,} | {apnea:,} | {dropout:,} | {rural:,} | {urban:,} | {missing:,} |".format(
+                    name=dataset.name,
+                    n=dataset.cohort_size,
+                    apnea=dataset.sleep_apnea_count,
+                    dropout=dataset.dropout_count,
+                    rural=dataset.rural_count,
+                    urban=dataset.urban_count,
+                    missing=dataset.missing_rural,
+                )
             )
-        )
+        else:
+            lines.append(
+                "| {name} | {n:,} | {apnea:,} | {dropout:,} | {rural:,} | {urban:,} |".format(
+                    name=dataset.name,
+                    n=dataset.cohort_size,
+                    apnea=dataset.sleep_apnea_count,
+                    dropout=dataset.dropout_count,
+                    rural=dataset.rural_count,
+                    urban=dataset.urban_count,
+                )
+            )
     lines.append("")
 
     lines.append("## Pairwise Comparison (Rural vs Urban)")
     lines.append("")
     lines.append(
-        "Rates are computed within the sleep disorder cohort. P-values are from a two-proportion z-test."
+        "Rates represent under diagnosis rates (proportion of sleep disorder patients without a sleep apnea diagnosis). "
+        "P-values are from a two-proportion z-test."
     )
     lines.append("")
     lines.append("| Dataset | Rural N | Urban N | Rural Rate | Urban Rate | Risk Diff | Risk Ratio | z | p-value |")
@@ -596,6 +778,12 @@ def write_report(
         "a direct rate difference, while the regression isolates the rural effect conditional on covariates."
     )
     lines.append("")
+    lines.append(
+        "In the biased dataset that simulates real-world barriers to care experienced by rural populations, "
+        "we expect rural residence to be associated with a substantially higher odds of under diagnosis compared "
+        "to the baseline dataset where urban and rural patients have equal access to care."
+    )
+    lines.append("")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -636,6 +824,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _compute_population_stats(dataset: Dataset) -> Dict[str, SummaryStats]:
+    """Compute summary stats for urban and rural subsets of full population."""
+    if dataset.full_population is None:
+        return {}
+    pop = dataset.full_population
+    urban_mask = pop["rural"] == 0
+    rural_mask = pop["rural"] == 1
+    return {
+        "urban": compute_summary_stats(pop, urban_mask),
+        "rural": compute_summary_stats(pop, rural_mask),
+    }
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -651,12 +852,17 @@ def main() -> int:
         baseline.name: regression_analysis(baseline, args.seed, args.n_perm),
         biased.name: regression_analysis(biased, args.seed, args.n_perm),
     }
+    population_stats = {
+        baseline.name: _compute_population_stats(baseline),
+        biased.name: _compute_population_stats(biased),
+    }
 
     write_report(
         Path(args.out),
         [baseline, biased],
         pairwise,
         regressions,
+        population_stats,
         args.n_perm,
     )
     print(f"Wrote report to {args.out}")
