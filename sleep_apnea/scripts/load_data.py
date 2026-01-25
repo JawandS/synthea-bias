@@ -167,23 +167,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--baseline",
-        default=str(repo_root / "snythea" / "output_baseline"),
+        default=str(repo_root / "synthea" / "output_baseline"),
         help="Path to baseline Synthea output (root or csv directory).",
     )
     parser.add_argument(
         "--biased",
-        default=str(repo_root / "snythea" / "output_rural_bias"),
+        default=str(repo_root / "synthea" / "output_rural_bias"),
         help="Path to biased Synthea output (root or csv directory).",
     )
     parser.add_argument(
         "--reference",
-        default=str(repo_root / "snythea" / "output"),
+        default=str(repo_root / "synthea" / "output"),
         help="Path to reference output with headers (root or csv directory).",
     )
     parser.add_argument(
         "--sdoh",
         default=str(
-            repo_root / "snythea" / "src" / "main" / "resources" / "geography" / "sdoh.csv"
+            repo_root / "synthea" / "src" / "main" / "resources" / "geography" / "sdoh.csv"
         ),
         help="Path to SDoH CSV with URBAN column.",
     )

@@ -19,7 +19,7 @@ Use Montana for consistency with the sleep apnea case study.
 
 Before generating the biased dataset, install the modified module that supports override-based bias:
 ```bash
-# From snythea directory
+# From synthea directory
 cp ../diabetes/artifacts/metabolic_syndrome_care_biased.json \
    src/main/resources/modules/metabolic_syndrome_care.json
 ```

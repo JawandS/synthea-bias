@@ -117,17 +117,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--baseline",
-        default=str(repo_root / "snythea" / "output_baseline_documentation"),
+        default=str(repo_root / "synthea" / "output_baseline_documentation"),
         help="Path to baseline Synthea output (root or csv directory).",
     )
     parser.add_argument(
         "--biased",
-        default=str(repo_root / "snythea" / "output_documentation_bias"),
+        default=str(repo_root / "synthea" / "output_documentation_bias"),
         help="Path to biased Synthea output (root or csv directory).",
     )
     parser.add_argument(
         "--reference",
-        default=str(repo_root / "snythea" / "output"),
+        default=str(repo_root / "synthea" / "output"),
         help="Path to reference output with headers (root or csv directory).",
     )
     parser.add_argument(

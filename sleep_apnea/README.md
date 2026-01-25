@@ -18,7 +18,7 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
 ```bash
 ./run_synthea -s 160 -cs 160 -o false -p 20000 \
   --exporter.csv.export=true \
-  --exporter.csv.append_mode=true \
+  --exporter.csv.append_mode=false \
   --exporter.baseDirectory=./output_baseline \
   Montana 
 ```
@@ -27,7 +27,7 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
 ```bash
 ./run_synthea -s 160 -cs 160 -o false -p 20000 \
   --exporter.csv.export=true \
-  --exporter.csv.append_mode=true \
+  --exporter.csv.append_mode=false \
   --exporter.baseDirectory=./output_rural_bias \
   --module_override=/home/js/contracts/synthea-bias/config/overrides_rural_sleep_apnea.properties \
   Montana 
