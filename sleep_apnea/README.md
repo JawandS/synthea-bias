@@ -5,10 +5,27 @@ in synthetic patient data. We compare a baseline Synthea simulation against a bi
 where rural patients experience higher dropout rates in the sleep apnea care pathway.
 
 ## Technical overview
+
+### Primary Script
+- `scripts/report.py`: **Main entry point.** Generates a comprehensive case study report (`sleep_apnea_report.md`) combining all analyses: background, population statistics, underdiagnosis analysis, model training, and cross-dataset evaluation.
+
+### Supporting Scripts
 - `scripts/load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
 - `scripts/summary_stats.py`: provides summary statistics on the datasets (should be very similar).
-- `scripts/models.py`: trains logistic regression, random forest, and gradient boosted decision tree models to predict sleep apnea diagnosis using the defined features. Implements train/test/validate split and hyperparameter tuning, and writes a markdown report to `sleep_apnea/output`.
-- `scripts/analytics.py`: estimates rural under diagnosis effects using a pairwise rural/urban comparison and an adjusted logistic regression, writing a report to `sleep_apnea/output`.
+- `scripts/models.py`: model training library used by `report.py`. Trains logistic regression, random forest, and gradient boosted decision tree models.
+- `scripts/analytics.py`: analytics library used by `report.py`. Implements pairwise rural/urban comparison and adjusted logistic regression.
+
+### Usage
+```bash
+# Generate comprehensive report (includes model training)
+uv run python scripts/report.py
+
+# Generate report without model training (faster, analytics only)
+uv run python scripts/report.py --skip-models
+
+# Custom output path
+uv run python scripts/report.py --out output/my_report.md
+```
 
 ## Data Generation
 
