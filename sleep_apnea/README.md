@@ -29,8 +29,8 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
   --exporter.baseDirectory=./output_rural_bias \
-  --module_override=/home/js/contracts/synthea-bias/config/overrides_rural_sleep_apnea.properties \
-  Montana 
+  --module_override=./config/overrides_rural_sleep_apnea.properties \
+  Montana
 ```
 
 ## Background
@@ -90,17 +90,17 @@ The override file `config/overrides_rural_sleep_apnea.properties` modifies these
 to simulate rural access barriers:
 
 ```properties
-# Wait Until Overnight Study: 70% of rural patients drop out
-sleep_apnea.json::$['states']['Wait Until Overnight Study']['complex_transition'][0]['distributions'][0]['distribution'] = 0.7
-sleep_apnea.json::$['states']['Wait Until Overnight Study']['complex_transition'][0]['distributions'][1]['distribution'] = 0.3
+# Wait Until Overnight Study: 80% of rural patients drop out
+sleep_apnea.json::$['states']['Wait Until Overnight Study']['complex_transition'][0]['distributions'][0]['distribution'] = 0.8
+sleep_apnea.json::$['states']['Wait Until Overnight Study']['complex_transition'][0]['distributions'][1]['distribution'] = 0.2
 
-# Appointment Delay: 70% of rural patients drop out
-sleep_apnea.json::$['states']['Appointment Delay']['complex_transition'][0]['distributions'][0]['distribution'] = 0.7
-sleep_apnea.json::$['states']['Appointment Delay']['complex_transition'][0]['distributions'][1]['distribution'] = 0.3
+# Appointment Delay: 80% of rural patients drop out
+sleep_apnea.json::$['states']['Appointment Delay']['complex_transition'][0]['distributions'][0]['distribution'] = 0.8
+sleep_apnea.json::$['states']['Appointment Delay']['complex_transition'][0]['distributions'][1]['distribution'] = 0.2
 ```
 
 This creates a biased dataset where:
-- **70% of rural patients** who enter the sleep apnea pathway drop out before diagnosis
+- **80% of rural patients** who enter the sleep apnea pathway drop out before diagnosis
 - Urban patients continue to receive full care
 - The resulting data reflects lower sleep apnea diagnosis rates in rural populations
 
