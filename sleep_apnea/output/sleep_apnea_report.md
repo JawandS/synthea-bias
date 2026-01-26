@@ -1,6 +1,6 @@
 # Sleep Apnea Case Study: Rural Access Bias
 
-*Generated: 2026-01-25 20:43:24*
+*Generated: 2026-01-26 11:10:59*
 
 ## Executive Summary
 
@@ -10,7 +10,7 @@ This case study demonstrates how healthcare access disparities can introduce sys
 
 - Rural underdiagnosis rate in biased dataset: **82.93%** vs urban rate of **0.37%**
 - Adjusted odds ratio for rural underdiagnosis: **21.432** (p=0.002)
-- Models trained on biased data show degraded performance when evaluated on baseline population
+- Cross-dataset evaluation reveals how biased training data interacts with model generalization
 
 ---
 
@@ -171,9 +171,9 @@ Binary classification: patient has a sleep apnea diagnosis (SNOMED 73430006 or 7
 | baseline | logistic | 0.850 | 0.149 | 0.033 | 13999/3000/3001 |
 | baseline | rf | 0.853 | 0.158 | 0.033 | 13999/3000/3001 |
 | baseline | gbdt | 0.847 | 0.142 | 0.033 | 13999/3000/3001 |
-| biased | logistic | 0.867 | 0.124 | 0.026 | 13999/3000/3001 |
-| biased | rf | 0.871 | 0.155 | 0.130 | 13999/3000/3001 |
-| biased | gbdt | 0.870 | 0.131 | 0.026 | 13999/3000/3001 |
+| biased | logistic | 0.842 | 0.118 | 0.026 | 13999/3000/3001 |
+| biased | rf | 0.850 | 0.119 | 0.025 | 13999/3000/3001 |
+| biased | gbdt | 0.841 | 0.120 | 0.026 | 13999/3000/3001 |
 
 ### 5.2 Selected Hyperparameters
 
@@ -186,8 +186,8 @@ Binary classification: patient has a sleep apnea diagnosis (SNOMED 73430006 or 7
 **Biased:**
 
 - *logistic*: model__C=0.1, model__class_weight=None
-- *rf*: model__n_estimators=200, model__max_depth=10, model__min_samples_leaf=5, model__class_weight=balanced
-- *gbdt*: model__n_estimators=100, model__learning_rate=0.1, model__max_depth=3, model__min_samples_leaf=10
+- *rf*: model__n_estimators=200, model__max_depth=5, model__min_samples_leaf=1, model__class_weight=None
+- *gbdt*: model__n_estimators=200, model__learning_rate=0.1, model__max_depth=2, model__min_samples_leaf=10
 
 ---
 
@@ -195,21 +195,23 @@ Binary classification: patient has a sleep apnea diagnosis (SNOMED 73430006 or 7
 
 To quantify how training on biased data affects real-world performance, we evaluate biased-trained models on the baseline test set. This simulates deploying a model trained on data with access disparities to a population with equitable care access.
 
-**Methodology:** Baseline test N=3,001; overlap N=3,001; removed-not-in-biased N=0; removed-seen-in-biased N=2,508; final test N=493.
+**Methodology:** Both datasets share the same patients (same Synthea seed).  A single patient-ID split is used so that the biased models are never evaluated on patients they trained on.  Test N=3,001; positives=111.
 
 ### 6.1 Performance Comparison
 
 | Model | Baseline AUC | Biased AUC | Δ AUC | Baseline AP | Biased AP | Δ AP | Test N |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| logistic | 0.824 | 0.824 | +0.000 | 0.123 | 0.126 | +0.003 | 493 |
-| rf | 0.834 | 0.861 | +0.027 | 0.146 | 0.172 | +0.026 | 493 |
-| gbdt | 0.818 | 0.831 | +0.013 | 0.137 | 0.175 | +0.039 | 493 |
+| logistic | 0.850 | 0.850 | +0.000 | 0.149 | 0.152 | +0.002 | 3,001 |
+| rf | 0.853 | 0.856 | +0.003 | 0.158 | 0.161 | +0.002 | 3,001 |
+| gbdt | 0.847 | 0.847 | -0.000 | 0.142 | 0.165 | +0.023 | 3,001 |
 
-### 6.2 Degradation Analysis
+### 6.2 Cross-Dataset Analysis
 
-- **logistic**: AUC improved by 0.000, AP changed by +0.003
-- **rf**: AUC improved by 0.027, AP changed by +0.026
-- **gbdt**: AUC improved by 0.013, AP changed by +0.039
+- **logistic**: AUC remained similar (Δ=+0.000), AP Δ=+0.002
+- **rf**: AUC remained similar (Δ=+0.003), AP Δ=+0.002
+- **gbdt**: AUC remained similar (Δ=-0.000), AP Δ=+0.023
+
+Note: The biased models were trained on labels where rural patients are underdiagnosed, but urban/rural residence is not an input feature.  Because the feature distributions are similar across rural and urban populations, the models cannot easily learn the rural-specific label bias, limiting the expected degradation effect.
 
 ---
 
@@ -217,52 +219,52 @@ To quantify how training on biased data affects real-world performance, we evalu
 
 Aggregate metrics like AUC can mask disparities between subgroups. This section examines model performance separately for rural and urban patients to reveal how bias in training data translates to differential model behavior.
 
+**Classification threshold:** Instead of the default 0.5 (which produces 100% false-negative rates at low prevalence), the threshold is set per-model by maximizing Youden's J (sensitivity + specificity - 1) on the full test set, then applied to each subgroup.
+
 ### 7.1 AUC by Subgroup
 
-AUC measures discriminative ability—how well the model ranks positive cases above negative cases. Gaps indicate the model is better at distinguishing disease in one population than another.
+AUC measures discriminative ability — how well the model ranks positive cases above negative cases.  95% bootstrap confidence intervals (2 000 resamples) are shown in brackets.
 
-| Dataset | Model | Rural AUC | Urban AUC | Gap (R-U) | Rural N | Urban N |
+| Dataset | Model | Rural AUC [95% CI] | Urban AUC [95% CI] | Gap (R-U) | Rural N (pos) | Urban N (pos) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| baseline | logistic | 0.855 | 0.848 | +0.007 | 792 | 2,209 |
-| baseline | rf | 0.848 | 0.855 | -0.007 | 792 | 2,209 |
-| baseline | gbdt | 0.839 | 0.850 | -0.011 | 792 | 2,209 |
-| biased | logistic | 0.882 | 0.868 | +0.014 | 818 | 2,183 |
-| biased | rf | 0.823 | 0.879 | -0.056 | 818 | 2,183 |
-| biased | gbdt | 0.858 | 0.875 | -0.017 | 818 | 2,183 |
+| baseline | logistic | 0.855 [0.80, 0.91] | 0.848 [0.82, 0.88] | +0.007 | 792 (31) | 2,209 (80) |
+| baseline | rf | 0.848 [0.79, 0.90] | 0.855 [0.82, 0.89] | -0.007 | 792 (31) | 2,209 (80) |
+| baseline | gbdt | 0.839 [0.78, 0.89] | 0.850 [0.82, 0.88] | -0.011 | 792 (31) | 2,209 (80) |
+| biased | logistic | 0.946 [0.87, 1.00] | 0.842 [0.81, 0.88] | +0.104 | 792 (3) | 2,209 (80) |
+| biased | rf | 0.946 [0.88, 0.99] | 0.851 [0.82, 0.88] | +0.095 | 792 (3) | 2,209 (80) |
+| biased | gbdt | 0.888 [0.81, 0.99] | 0.843 [0.81, 0.88] | +0.044 | 792 (3) | 2,209 (80) |
 
 ### 7.2 False Negative Rate by Subgroup
 
-The **false negative rate (FNR)** is the proportion of true positive cases that the model misses (predicts as negative). A higher FNR for rural patients means more rural patients with sleep apnea are incorrectly told they don't have it—a direct measure of underdiagnosis harm.
+The **false negative rate (FNR)** is the proportion of true positive cases that the model misses (predicts as negative).  A higher FNR for rural patients means more rural patients with sleep apnea are incorrectly told they don't have it.  95% Wilson score intervals are shown in brackets; wide intervals indicate small subgroup sample sizes.
 
-| Dataset | Model | Rural FNR | Urban FNR | Gap (R-U) | Interpretation |
-| --- | --- | ---: | ---: | ---: | --- |
-| baseline | logistic | 100.00% | 100.00% | +0.000 | Similar miss rates |
-| baseline | rf | 100.00% | 100.00% | +0.000 | Similar miss rates |
-| baseline | gbdt | 100.00% | 100.00% | +0.000 | Similar miss rates |
-| biased | logistic | 100.00% | 100.00% | +0.000 | Similar miss rates |
-| biased | rf | 40.00% | 19.48% | +0.205 | Rural patients significantly more likely to be missed |
-| biased | gbdt | 100.00% | 100.00% | +0.000 | Similar miss rates |
+| Dataset | Model | Threshold | Rural FNR [95% CI] | Urban FNR [95% CI] | Gap (R-U) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| baseline | logistic | 0.028 | 12.90% [5.1%, 28.9%] | 18.75% [11.7%, 28.7%] | -0.058 |
+| baseline | rf | 0.037 | 12.90% [5.1%, 28.9%] | 15.00% [8.8%, 24.4%] | -0.021 |
+| baseline | gbdt | 0.033 | 16.13% [7.1%, 32.6%] | 13.75% [7.9%, 23.0%] | +0.024 |
+| biased | logistic | 0.022 | 0.00% [0.0%, 56.2%] | 18.75% [11.7%, 28.7%] | -0.188 |
+| biased | rf | 0.058 | 0.00% [0.0%, 56.2%] | 30.00% [21.1%, 40.8%] | -0.300 |
+| biased | gbdt | 0.029 | 0.00% [0.0%, 56.2%] | 20.00% [12.7%, 30.0%] | -0.200 |
 
 ### 7.3 Mean Predicted Probability by Subgroup
 
-The mean predicted probability reveals systematic differences in how the model scores patients from different subgroups. A lower mean prediction for rural patients indicates the model has learned to associate rural-correlated features with lower disease probability.
+The mean predicted probability reveals systematic differences in how the model scores patients from different subgroups.  A lower mean prediction for rural patients indicates the model has learned to associate rural-correlated features with lower disease probability.  95% normal-approximation CIs are shown in brackets.
 
-| Dataset | Model | Rural Mean Pred | Urban Mean Pred | Gap (R-U) |
+| Dataset | Model | Rural Mean Pred [95% CI] | Urban Mean Pred [95% CI] | Gap (R-U) |
 | --- | --- | ---: | ---: | ---: |
-| baseline | logistic | 0.037 | 0.037 | +0.0008 |
-| baseline | rf | 0.038 | 0.036 | +0.0013 |
-| baseline | gbdt | 0.039 | 0.036 | +0.0027 |
-| biased | logistic | 0.029 | 0.028 | +0.0013 |
-| biased | rf | 0.270 | 0.260 | +0.0105 |
-| biased | gbdt | 0.031 | 0.029 | +0.0025 |
+| baseline | logistic | 0.037 [0.0336, 0.0411] | 0.037 [0.0342, 0.0389] | +0.0008 |
+| baseline | rf | 0.038 [0.0346, 0.0410] | 0.036 [0.0346, 0.0383] | +0.0013 |
+| baseline | gbdt | 0.039 [0.0344, 0.0427] | 0.036 [0.0335, 0.0381] | +0.0027 |
+| biased | logistic | 0.029 [0.0263, 0.0320] | 0.029 [0.0270, 0.0306] | +0.0004 |
+| biased | rf | 0.029 [0.0269, 0.0318] | 0.029 [0.0272, 0.0301] | +0.0007 |
+| biased | gbdt | 0.030 [0.0265, 0.0330] | 0.029 [0.0268, 0.0305] | +0.0011 |
 
 ### 7.4 Fairness Interpretation
 
-**Key findings from fairness analysis:**
+The fairness metrics do not show strong evidence of systematic rural disadvantage in model predictions.  Because urban/rural residence is excluded from the feature set and rural vs urban patients have similar clinical feature distributions, the models have limited ability to distinguish the two groups.  The bias in training labels (rural underdiagnosis) therefore does not translate into large differential prediction errors.  This is an important finding: **when bias is in labels but features are group-invariant, standard ML models may not propagate the bias into predictions**.  However, the biased training data still reduces overall model utility by providing fewer true positive examples for the model to learn from.
 
-- **Higher miss rate for rural patients**: The false negative rate gap shows that rural patients with sleep apnea are more likely to be incorrectly classified as negative. This perpetuates the underdiagnosis pattern present in the training data.
-
-These findings demonstrate that **aggregate metrics like AUC can hide fairness harms**. A model can achieve good overall discrimination while systematically disadvantaging specific subgroups.
+**Caution:** The biased test set contains very few rural positive cases (3, 3, 3 per model), so subgroup metrics have wide confidence intervals.  Larger datasets would be needed for definitive fairness conclusions.
 
 ---
 
@@ -274,7 +276,7 @@ These findings demonstrate that **aggregate metrics like AUC can hide fairness h
 
 2. **Bias persists after covariate adjustment**: The significant rural coefficient in the adjusted regression confirms that underdiagnosis is driven by access barriers, not differences in clinical risk factors.
 
-3. **Biased training data affects model utility**: Models trained on biased data may show different performance characteristics when deployed to populations with different care access patterns.
+3. **Label bias does not always transmit through models**: When the protected attribute (rural/urban) is excluded from features and the remaining features have similar distributions across groups, models may not learn group-specific biases from the corrupted labels. However, the biased data still reduces overall model utility by providing fewer true positive training examples.
 
 ### 8.2 Real-World Implications
 
@@ -288,7 +290,7 @@ These findings demonstrate that **aggregate metrics like AUC can hide fairness h
 
 - Synthea generates synthetic data that may not capture all real-world complexities
 - The 80% dropout rate is illustrative; actual rural dropout rates vary by region and condition
-- Cross-dataset evaluation is limited by patient ID overlap between baseline and biased runs
+- Very few rural positive cases in the biased test set limit the power of subgroup fairness analysis
 
 ---
 

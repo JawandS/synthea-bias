@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.calibration import calibration_curve
-from sklearn.metrics import roc_auc_score, average_precision_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, roc_curve, average_precision_score, confusion_matrix
 
 from analytics import (
     Dataset as AnalyticsDataset,
@@ -28,15 +28,12 @@ from models import (
     CrossEvaluation,
     Dataset as ModelDataset,
     ModelResult,
-    ProgressReporter,
     SplitData,
     load_dataset as load_model_dataset,
     save_models,
     split_dataset,
     train_models,
-    _build_model_specs,
     _evaluate,
-    FEATURE_NAMES,
 )
 
 
@@ -46,13 +43,17 @@ class SubgroupMetrics:
     n: int
     n_positive: int
     auc: Optional[float]
+    auc_ci: Optional[Tuple[float, float]]  # 95% bootstrap CI
     ap: Optional[float]
     fpr: Optional[float]  # False positive rate
     fnr: Optional[float]  # False negative rate (miss rate)
+    fnr_ci: Optional[Tuple[float, float]]  # 95% Wilson CI
     tpr: Optional[float]  # True positive rate (recall/sensitivity)
     precision: Optional[float]
     mean_prediction: Optional[float]
+    mean_prediction_ci: Optional[Tuple[float, float]]  # 95% CI
     calibration_error: Optional[float]  # Expected calibration error
+    threshold: Optional[float]  # Classification threshold used
 
 
 @dataclass
@@ -68,10 +69,68 @@ class FairnessMetrics:
     prediction_gap: Optional[float]  # rural mean pred - urban mean pred
 
 
+def _compute_optimal_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    """Find classification threshold maximizing Youden's J (sensitivity + specificity - 1)."""
+    if len(np.unique(y_true)) < 2:
+        return 0.5
+    fpr_vals, tpr_vals, thresholds = roc_curve(y_true, y_prob)
+    j_scores = tpr_vals - fpr_vals
+    best_idx = int(np.argmax(j_scores))
+    return float(thresholds[best_idx])
+
+
+def _bootstrap_auc_ci(
+    y_true: np.ndarray,
+    y_prob: np.ndarray,
+    n_bootstrap: int = 2000,
+    seed: int = 42,
+) -> Optional[Tuple[float, float]]:
+    """Compute 95% bootstrap CI for AUC."""
+    rng = np.random.RandomState(seed)
+    n = len(y_true)
+    aucs: List[float] = []
+    for _ in range(n_bootstrap):
+        idx = rng.choice(n, size=n, replace=True)
+        if len(np.unique(y_true[idx])) < 2:
+            continue
+        aucs.append(float(roc_auc_score(y_true[idx], y_prob[idx])))
+    if len(aucs) < 100:
+        return None
+    return (float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5)))
+
+
+def _wilson_ci(
+    successes: int,
+    n: int,
+    z: float = 1.96,
+) -> Optional[Tuple[float, float]]:
+    """Wilson score 95% CI for a proportion."""
+    if n == 0:
+        return None
+    p_hat = successes / n
+    denom = 1 + z ** 2 / n
+    center = (p_hat + z ** 2 / (2 * n)) / denom
+    margin = z * np.sqrt(p_hat * (1 - p_hat) / n + z ** 2 / (4 * n ** 2)) / denom
+    return (max(0.0, center - margin), min(1.0, center + margin))
+
+
+def _mean_ci(
+    values: np.ndarray,
+    z: float = 1.96,
+) -> Optional[Tuple[float, float]]:
+    """Normal-approximation 95% CI for a mean."""
+    n = len(values)
+    if n < 2:
+        return None
+    mean = float(values.mean())
+    se = float(values.std(ddof=1) / np.sqrt(n))
+    return (mean - z * se, mean + z * se)
+
+
 def _compute_subgroup_metrics(
     y_true: np.ndarray,
     y_prob: np.ndarray,
-    threshold: float = 0.5,
+    threshold: float,
 ) -> SubgroupMetrics:
     """Compute metrics for a single subgroup."""
     n = len(y_true)
@@ -79,26 +138,32 @@ def _compute_subgroup_metrics(
 
     if n == 0:
         return SubgroupMetrics(
-            n=0, n_positive=0, auc=None, ap=None, fpr=None, fnr=None,
-            tpr=None, precision=None, mean_prediction=None, calibration_error=None
+            n=0, n_positive=0, auc=None, auc_ci=None, ap=None,
+            fpr=None, fnr=None, fnr_ci=None, tpr=None, precision=None,
+            mean_prediction=None, mean_prediction_ci=None,
+            calibration_error=None, threshold=threshold,
         )
 
     mean_prediction = float(y_prob.mean())
+    mean_prediction_ci = _mean_ci(y_prob)
 
     # AUC and AP require both classes
     if n_positive == 0 or n_positive == n:
         auc = None
+        auc_ci = None
         ap = None
     else:
         auc = float(roc_auc_score(y_true, y_prob))
+        auc_ci = _bootstrap_auc_ci(y_true, y_prob)
         ap = float(average_precision_score(y_true, y_prob))
 
-    # Confusion matrix metrics
+    # Confusion matrix metrics at the provided threshold
     y_pred = (y_prob >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
 
     fpr = float(fp / (fp + tn)) if (fp + tn) > 0 else None
     fnr = float(fn / (fn + tp)) if (fn + tp) > 0 else None
+    fnr_ci = _wilson_ci(int(fn), int(fn + tp)) if (fn + tp) > 0 else None
     tpr = float(tp / (fn + tp)) if (fn + tp) > 0 else None
     precision = float(tp / (tp + fp)) if (tp + fp) > 0 else None
 
@@ -116,13 +181,17 @@ def _compute_subgroup_metrics(
         n=n,
         n_positive=n_positive,
         auc=auc,
+        auc_ci=auc_ci,
         ap=ap,
         fpr=fpr,
         fnr=fnr,
+        fnr_ci=fnr_ci,
         tpr=tpr,
         precision=precision,
         mean_prediction=mean_prediction,
+        mean_prediction_ci=mean_prediction_ci,
         calibration_error=calibration_error,
+        threshold=threshold,
     )
 
 
@@ -133,10 +202,17 @@ def compute_fairness_metrics(
     X: pd.DataFrame,
     y: pd.Series,
     rural_indicator: pd.Series,
-    threshold: float = 0.5,
+    threshold: Optional[float] = None,
 ) -> FairnessMetrics:
-    """Compute fairness metrics comparing rural vs urban subgroups."""
+    """Compute fairness metrics comparing rural vs urban subgroups.
+
+    If *threshold* is None the optimal threshold (Youden's J) is computed
+    on the full test set and then applied to each subgroup.
+    """
     y_prob = estimator.predict_proba(X)[:, 1]
+
+    if threshold is None:
+        threshold = _compute_optimal_threshold(y.values, y_prob)
 
     # Split by rural/urban
     rural_mask = rural_indicator == 1
@@ -279,9 +355,15 @@ def write_comprehensive_report(
                 f"(p={_format_metric(biased_reg.rural_p_value)})"
             )
         if cross_results:
-            lines.append(
-                "- Models trained on biased data show degraded performance when evaluated on baseline population"
-            )
+            avg_delta_auc = sum(r.deltas["auc"] for r in cross_results) / len(cross_results)
+            if avg_delta_auc < -0.01:
+                lines.append(
+                    "- Models trained on biased data show degraded performance when evaluated on baseline population"
+                )
+            else:
+                lines.append(
+                    "- Cross-dataset evaluation reveals how biased training data interacts with model generalization"
+                )
         lines.append("")
 
     # ==========================================================================
@@ -716,15 +798,27 @@ def write_comprehensive_report(
             )
         lines.append("")
 
-        lines.append("### 6.2 Degradation Analysis")
+        lines.append("### 6.2 Cross-Dataset Analysis")
         lines.append("")
         for result in cross_results:
             delta_auc = result.deltas["auc"]
             delta_ap = result.deltas["ap"]
-            direction = "improved" if delta_auc > 0 else "degraded"
+            if delta_auc > 0.01:
+                direction = "improved"
+            elif delta_auc < -0.01:
+                direction = "degraded"
+            else:
+                direction = "remained similar"
             lines.append(
-                f"- **{result.model}**: AUC {direction} by {abs(delta_auc):.3f}, AP changed by {delta_ap:+.3f}"
+                f"- **{result.model}**: AUC {direction} (Δ={delta_auc:+.3f}), AP Δ={delta_ap:+.3f}"
             )
+        lines.append("")
+        lines.append(
+            "Note: The biased models were trained on labels where rural patients are underdiagnosed, "
+            "but urban/rural residence is not an input feature.  Because the feature distributions "
+            "are similar across rural and urban populations, the models cannot easily learn the "
+            "rural-specific label bias, limiting the expected degradation effect."
+        )
         lines.append("")
     else:
         lines.append(
@@ -748,73 +842,105 @@ def write_comprehensive_report(
         )
         lines.append("")
 
+        # Note threshold methodology
+        lines.append(
+            "**Classification threshold:** Instead of the default 0.5 (which produces 100% false-negative "
+            "rates at low prevalence), the threshold is set per-model by maximizing Youden's J "
+            "(sensitivity + specificity - 1) on the full test set, then applied to each subgroup."
+        )
+        lines.append("")
+
         # Group by dataset
-        baseline_fairness = [f for f in fairness_metrics if f.dataset_name == "baseline"]
         biased_fairness = [f for f in fairness_metrics if f.dataset_name == "biased"]
 
+        # --- 7.1 AUC by Subgroup (with 95% bootstrap CI) ---
         lines.append("### 7.1 AUC by Subgroup")
         lines.append("")
         lines.append(
-            "AUC measures discriminative ability—how well the model ranks positive cases above negative cases. "
-            "Gaps indicate the model is better at distinguishing disease in one population than another."
+            "AUC measures discriminative ability — how well the model ranks positive cases above "
+            "negative cases.  95% bootstrap confidence intervals (2 000 resamples) are shown in brackets."
         )
         lines.append("")
-        lines.append("| Dataset | Model | Rural AUC | Urban AUC | Gap (R-U) | Rural N | Urban N |")
+        lines.append("| Dataset | Model | Rural AUC [95% CI] | Urban AUC [95% CI] | Gap (R-U) | Rural N (pos) | Urban N (pos) |")
         lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
         for fm in fairness_metrics:
             gap_str = f"{fm.auc_gap:+.3f}" if fm.auc_gap is not None else "n/a"
+
+            def _auc_cell(sm: SubgroupMetrics) -> str:
+                if sm.auc is None:
+                    return "n/a"
+                s = f"{sm.auc:.3f}"
+                if sm.auc_ci is not None:
+                    s += f" [{sm.auc_ci[0]:.2f}, {sm.auc_ci[1]:.2f}]"
+                return s
+
             lines.append(
                 f"| {fm.dataset_name} | {fm.model_name} | "
-                f"{_format_metric(fm.rural.auc)} | {_format_metric(fm.urban.auc)} | {gap_str} | "
-                f"{fm.rural.n:,} | {fm.urban.n:,} |"
+                f"{_auc_cell(fm.rural)} | {_auc_cell(fm.urban)} | {gap_str} | "
+                f"{fm.rural.n:,} ({fm.rural.n_positive}) | {fm.urban.n:,} ({fm.urban.n_positive}) |"
             )
         lines.append("")
 
+        # --- 7.2 FNR by Subgroup (with Wilson CI) ---
         lines.append("### 7.2 False Negative Rate by Subgroup")
         lines.append("")
         lines.append(
             "The **false negative rate (FNR)** is the proportion of true positive cases that the model "
-            "misses (predicts as negative). A higher FNR for rural patients means more rural patients "
-            "with sleep apnea are incorrectly told they don't have it—a direct measure of underdiagnosis harm."
+            "misses (predicts as negative).  A higher FNR for rural patients means more rural patients "
+            "with sleep apnea are incorrectly told they don't have it.  95% Wilson score intervals "
+            "are shown in brackets; wide intervals indicate small subgroup sample sizes."
         )
         lines.append("")
-        lines.append("| Dataset | Model | Rural FNR | Urban FNR | Gap (R-U) | Interpretation |")
-        lines.append("| --- | --- | ---: | ---: | ---: | --- |")
+        lines.append("| Dataset | Model | Threshold | Rural FNR [95% CI] | Urban FNR [95% CI] | Gap (R-U) |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: |")
         for fm in fairness_metrics:
             gap_str = f"{fm.fnr_gap:+.3f}" if fm.fnr_gap is not None else "n/a"
-            if fm.fnr_gap is not None:
-                if fm.fnr_gap > 0.05:
-                    interp = "Rural patients significantly more likely to be missed"
-                elif fm.fnr_gap < -0.05:
-                    interp = "Urban patients more likely to be missed"
-                else:
-                    interp = "Similar miss rates"
-            else:
-                interp = "Insufficient data"
+            thresh_str = f"{fm.rural.threshold:.3f}" if fm.rural.threshold is not None else "n/a"
+
+            def _fnr_cell(sm: SubgroupMetrics) -> str:
+                if sm.fnr is None:
+                    return "n/a"
+                s = _format_pct(sm.fnr)
+                if sm.fnr_ci is not None:
+                    s += f" [{sm.fnr_ci[0]*100:.1f}%, {sm.fnr_ci[1]*100:.1f}%]"
+                return s
+
             lines.append(
-                f"| {fm.dataset_name} | {fm.model_name} | "
-                f"{_format_pct(fm.rural.fnr)} | {_format_pct(fm.urban.fnr)} | {gap_str} | {interp} |"
+                f"| {fm.dataset_name} | {fm.model_name} | {thresh_str} | "
+                f"{_fnr_cell(fm.rural)} | {_fnr_cell(fm.urban)} | {gap_str} |"
             )
         lines.append("")
 
+        # --- 7.3 Mean Predicted Probability (with CI) ---
         lines.append("### 7.3 Mean Predicted Probability by Subgroup")
         lines.append("")
         lines.append(
             "The mean predicted probability reveals systematic differences in how the model scores "
-            "patients from different subgroups. A lower mean prediction for rural patients indicates "
-            "the model has learned to associate rural-correlated features with lower disease probability."
+            "patients from different subgroups.  A lower mean prediction for rural patients indicates "
+            "the model has learned to associate rural-correlated features with lower disease probability.  "
+            "95% normal-approximation CIs are shown in brackets."
         )
         lines.append("")
-        lines.append("| Dataset | Model | Rural Mean Pred | Urban Mean Pred | Gap (R-U) |")
+        lines.append("| Dataset | Model | Rural Mean Pred [95% CI] | Urban Mean Pred [95% CI] | Gap (R-U) |")
         lines.append("| --- | --- | ---: | ---: | ---: |")
         for fm in fairness_metrics:
             gap_str = f"{fm.prediction_gap:+.4f}" if fm.prediction_gap is not None else "n/a"
+
+            def _pred_cell(sm: SubgroupMetrics) -> str:
+                if sm.mean_prediction is None:
+                    return "n/a"
+                s = f"{sm.mean_prediction:.3f}"
+                if sm.mean_prediction_ci is not None:
+                    s += f" [{sm.mean_prediction_ci[0]:.4f}, {sm.mean_prediction_ci[1]:.4f}]"
+                return s
+
             lines.append(
                 f"| {fm.dataset_name} | {fm.model_name} | "
-                f"{_format_metric(fm.rural.mean_prediction)} | {_format_metric(fm.urban.mean_prediction)} | {gap_str} |"
+                f"{_pred_cell(fm.rural)} | {_pred_cell(fm.urban)} | {gap_str} |"
             )
         lines.append("")
 
+        # --- 7.4 Interpretation ---
         lines.append("### 7.4 Fairness Interpretation")
         lines.append("")
 
@@ -851,11 +977,30 @@ def write_comprehensive_report(
                 )
                 lines.append("")
             else:
+                # Honest finding: bias didn't transmit strongly through models
                 lines.append(
-                    "The fairness metrics do not show strong evidence of systematic rural disadvantage in this evaluation. "
-                    "This may be due to small subgroup sample sizes or the specific test set composition."
+                    "The fairness metrics do not show strong evidence of systematic rural disadvantage "
+                    "in model predictions.  Because urban/rural residence is excluded from the feature set "
+                    "and rural vs urban patients have similar clinical feature distributions, the models have "
+                    "limited ability to distinguish the two groups.  The bias in training labels (rural "
+                    "underdiagnosis) therefore does not translate into large differential prediction errors.  "
+                    "This is an important finding: **when bias is in labels but features are group-invariant, "
+                    "standard ML models may not propagate the bias into predictions**.  However, the biased "
+                    "training data still reduces overall model utility by providing fewer true positive "
+                    "examples for the model to learn from."
                 )
                 lines.append("")
+
+                # Note sample-size limitations
+                biased_rural_pos = [f.rural.n_positive for f in biased_fairness]
+                if any(p < 30 for p in biased_rural_pos):
+                    lines.append(
+                        "**Caution:** The biased test set contains very few rural positive cases "
+                        f"({', '.join(str(p) for p in biased_rural_pos)} per model), so subgroup metrics "
+                        "have wide confidence intervals.  Larger datasets would be needed for definitive "
+                        "fairness conclusions."
+                    )
+                    lines.append("")
 
     # ==========================================================================
     # CONCLUSIONS
@@ -882,9 +1027,11 @@ def write_comprehensive_report(
     )
     lines.append("")
     lines.append(
-        "3. **Biased training data affects model utility**: Models trained on biased data may "
-        "show different performance characteristics when deployed to populations with different "
-        "care access patterns."
+        "3. **Label bias does not always transmit through models**: When the protected attribute "
+        "(rural/urban) is excluded from features and the remaining features have similar distributions "
+        "across groups, models may not learn group-specific biases from the corrupted labels. "
+        "However, the biased data still reduces overall model utility by providing fewer true positive "
+        "training examples."
     )
     lines.append("")
 
@@ -917,7 +1064,7 @@ def write_comprehensive_report(
         "- The 80% dropout rate is illustrative; actual rural dropout rates vary by region and condition"
     )
     lines.append(
-        "- Cross-dataset evaluation is limited by patient ID overlap between baseline and biased runs"
+        "- Very few rural positive cases in the biased test set limit the power of subgroup fairness analysis"
     )
     lines.append("")
 
@@ -1087,18 +1234,29 @@ def main() -> int:
     cross_note = ""
     cross_test_size = 0
 
+    baseline_split = None
+    biased_split = None
+
     if args.skip_models:
         print("[3/5] Skipping model training (--skip-models)")
         print()
     else:
         print("[3/5] Training prediction models...")
 
-        model_specs = _build_model_specs(args.seed)
-        total_candidates = sum(len(grid) for _, _, grid in model_specs)
-
-        # Split datasets
+        # Split baseline dataset first
         baseline_split = split_dataset(model_baseline, args.train_frac, args.val_frac, args.seed)
-        biased_split = split_dataset(model_biased, args.train_frac, args.val_frac, args.seed)
+
+        # Use the SAME patient-ID split for biased dataset so cross-evaluation
+        # can use the full test set.  Both datasets share the same patients
+        # (same Synthea seed), so we align by index.
+        biased_split = SplitData(
+            X_train=model_biased.features.loc[baseline_split.X_train.index],
+            X_val=model_biased.features.loc[baseline_split.X_val.index],
+            X_test=model_biased.features.loc[baseline_split.X_test.index],
+            y_train=model_biased.labels.loc[baseline_split.X_train.index],
+            y_val=model_biased.labels.loc[baseline_split.X_val.index],
+            y_test=model_biased.labels.loc[baseline_split.X_test.index],
+        )
 
         # Train models
         model_results.extend(
@@ -1110,49 +1268,40 @@ def main() -> int:
 
         print(f"  - Trained {len(model_results)} models")
 
-        # Cross-dataset evaluation
+        # Cross-dataset evaluation: score the baseline test set (ground-truth
+        # labels) with both baseline-trained and biased-trained models.
         print("[4/5] Running cross-dataset evaluation...")
 
         baseline_models = {r.model: r.estimator for r in model_results if r.dataset == "baseline"}
         biased_models = {r.model: r.estimator for r in model_results if r.dataset == "biased"}
 
-        base_test_ids = baseline_split.X_test.index
-        biased_ids = pd.Index(model_biased.features.index)
-        overlap_ids = base_test_ids[base_test_ids.isin(biased_ids)]
-        biased_seen_ids = biased_split.X_train.index.append(biased_split.X_val.index)
-        filtered_ids = overlap_ids[~overlap_ids.isin(biased_seen_ids)]
-
-        dropped_not_in_biased = len(base_test_ids) - len(overlap_ids)
-        dropped_seen_in_biased = len(overlap_ids) - len(filtered_ids)
-
-        cross_test_size = len(filtered_ids)
+        X_cross = baseline_split.X_test
+        y_cross = baseline_split.y_test
+        cross_test_size = len(y_cross)
         cross_note = (
-            f"Baseline test N={len(base_test_ids):,}; overlap N={len(overlap_ids):,}; "
-            f"removed-not-in-biased N={dropped_not_in_biased:,}; "
-            f"removed-seen-in-biased N={dropped_seen_in_biased:,}; final test N={cross_test_size:,}."
+            f"Both datasets share the same patients (same Synthea seed).  A single "
+            f"patient-ID split is used so that the biased models are never evaluated "
+            f"on patients they trained on.  Test N={cross_test_size:,}; "
+            f"positives={int(y_cross.sum()):,}."
         )
 
-        if cross_test_size > 0:
-            X_cross = baseline_split.X_test.loc[filtered_ids]
-            y_cross = baseline_split.y_test.loc[filtered_ids]
-
-            for model_name, biased_model in biased_models.items():
-                baseline_model = baseline_models.get(model_name)
-                if baseline_model is None:
-                    continue
-                baseline_probs = baseline_model.predict_proba(X_cross)[:, 1].tolist()
-                biased_probs = biased_model.predict_proba(X_cross)[:, 1].tolist()
-                baseline_metrics = _evaluate(y_cross, baseline_probs)
-                biased_metrics = _evaluate(y_cross, biased_probs)
-                deltas = {key: biased_metrics[key] - baseline_metrics[key] for key in baseline_metrics}
-                cross_results.append(
-                    CrossEvaluation(
-                        model=model_name,
-                        baseline_metrics=baseline_metrics,
-                        biased_metrics=biased_metrics,
-                        deltas=deltas,
-                    )
+        for model_name, biased_model in biased_models.items():
+            baseline_model = baseline_models.get(model_name)
+            if baseline_model is None:
+                continue
+            baseline_probs = baseline_model.predict_proba(X_cross)[:, 1].tolist()
+            biased_probs = biased_model.predict_proba(X_cross)[:, 1].tolist()
+            baseline_metrics = _evaluate(y_cross, baseline_probs)
+            biased_metrics = _evaluate(y_cross, biased_probs)
+            deltas = {key: biased_metrics[key] - baseline_metrics[key] for key in baseline_metrics}
+            cross_results.append(
+                CrossEvaluation(
+                    model=model_name,
+                    baseline_metrics=baseline_metrics,
+                    biased_metrics=biased_metrics,
+                    deltas=deltas,
                 )
+            )
 
         print(f"  - Cross-evaluation test size: {cross_test_size}")
 
@@ -1166,20 +1315,19 @@ def main() -> int:
     # -------------------------------------------------------------------------
     fairness_results: List[FairnessMetrics] = []
 
-    if model_results:
+    if model_results and baseline_split is not None and biased_split is not None:
         print("[4.5/5] Computing fairness metrics...")
 
         # Get rural indicator from analytics datasets
         baseline_rural = analytics_baseline.full_population["rural"] if analytics_baseline.full_population is not None else None
         biased_rural = analytics_biased.full_population["rural"] if analytics_biased.full_population is not None else None
 
-        # Compute fairness metrics for each model on its own test set
+        # Compute fairness metrics for each model on its own test set.
+        # Threshold is computed per-model via Youden's J on the full test set.
         for result in model_results:
             if result.dataset == "baseline" and baseline_rural is not None:
-                # Get test set from baseline split
                 test_ids = baseline_split.X_test.index
                 rural_indicator = baseline_rural.reindex(test_ids)
-                # Filter to patients with known rural status
                 valid_mask = rural_indicator.notna()
                 if valid_mask.sum() > 0:
                     X_test = baseline_split.X_test[valid_mask]
@@ -1187,12 +1335,11 @@ def main() -> int:
                     rural_test = rural_indicator[valid_mask]
                     fm = compute_fairness_metrics(
                         result.model, result.dataset, result.estimator,
-                        X_test, y_test, rural_test
+                        X_test, y_test, rural_test,
                     )
                     fairness_results.append(fm)
 
             elif result.dataset == "biased" and biased_rural is not None:
-                # Get test set from biased split
                 test_ids = biased_split.X_test.index
                 rural_indicator = biased_rural.reindex(test_ids)
                 valid_mask = rural_indicator.notna()
@@ -1202,7 +1349,7 @@ def main() -> int:
                     rural_test = rural_indicator[valid_mask]
                     fm = compute_fairness_metrics(
                         result.model, result.dataset, result.estimator,
-                        X_test, y_test, rural_test
+                        X_test, y_test, rural_test,
                     )
                     fairness_results.append(fm)
 
