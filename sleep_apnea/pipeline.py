@@ -324,7 +324,7 @@ Examples:
     data_group = parser.add_argument_group("Data Loading")
     data_group.add_argument(
         "--baseline-source",
-        default=str(repo_root / "synthea" / "output_baseline"),
+        default=str(repo_root / "synthea" / "output_baseline_rural"),
         help="Path to baseline Synthea output directory.",
     )
     data_group.add_argument(

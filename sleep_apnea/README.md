@@ -38,7 +38,7 @@ The `pipeline.py` script runs the complete end-to-end workflow:
 | `--skip-data` | Skip data loading, use existing `data/` directory |
 | `--skip-models` | Skip model training (faster, analytics only) |
 | `--stats-only` | Only print summary statistics |
-| `--baseline-source PATH` | Path to baseline Synthea output (default: `../synthea/output_baseline`) |
+| `--baseline-source PATH` | Path to baseline Synthea output (default: `../synthea/output_baseline_rural`) |
 | `--biased-source PATH` | Path to biased Synthea output (default: `../synthea/output_rural_bias`) |
 | `--report PATH` | Output path for markdown report |
 
@@ -64,7 +64,7 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
 ./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
-  --exporter.baseDirectory=./output_baseline \
+  --exporter.baseDirectory=./output_baseline_rural \
   Montana
 ```
 
