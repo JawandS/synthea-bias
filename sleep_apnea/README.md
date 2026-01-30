@@ -33,22 +33,24 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
 
 ### Baseline Dataset
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 20000 \
+./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
   --exporter.baseDirectory=./output_baseline \
-  Montana 
+  Montana
 ```
 
 ### Biased Dataset (Rural Access Bias)
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 20000 \
+./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
   --exporter.baseDirectory=./output_rural_bias \
   --module_override=./config/overrides_rural_sleep_apnea.properties \
   Montana
 ```
+
+**Note:** The `-a 30-100` flag restricts the population to ages 30-100, since the sleep apnea module only evaluates patients aged 30+ for risk assessment.
 
 ## Background
 
