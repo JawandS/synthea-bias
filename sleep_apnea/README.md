@@ -61,18 +61,28 @@ Pick a state with rural counties (e.g., Montana) so the rural branch is exercise
 
 ### Baseline Dataset
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
+./run_synthea -s 160 -cs 160 -p 20000 -a 30-100 \
+  -m 4 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
+  --exporter.fhir.export=false \
+  --exporter.ccda.export=false \
+  --exporter.hospital.fhir.export=false \
+  --exporter.practitioner.fhir.export=false \
   --exporter.baseDirectory=./output_baseline_rural \
   Montana
 ```
 
 ### Biased Dataset (Rural Access Bias)
 ```bash
-./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
+./run_synthea -s 160 -cs 160 -p 20000 -a 30-100 \
+  -m 4 \
   --exporter.csv.export=true \
   --exporter.csv.append_mode=false \
+  --exporter.fhir.export=false \
+  --exporter.ccda.export=false \
+  --exporter.hospital.fhir.export=false \
+  --exporter.practitioner.fhir.export=false \
   --exporter.baseDirectory=./output_rural_bias \
   --module_override=./config/overrides_rural_sleep_apnea.properties \
   Montana
