@@ -109,6 +109,42 @@ Generate a list of concepts (used in the records) or attributes (variables on ea
 ./gradlew attributes
 ```
 
+## Sleep Apnea Case Study
+
+This repository includes a case study demonstrating rural access bias in healthcare data.
+See the `sleep_apnea/` directory for the complete analysis pipeline.
+
+### Generating Data for the Case Study
+
+The case study requires two datasets: baseline (equal access) and biased (rural dropout).
+
+```bash
+# Generate baseline dataset (20k middle-aged+ patients)
+./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
+  --exporter.csv.export=true \
+  --exporter.csv.append_mode=false \
+  --exporter.baseDirectory=./output_baseline \
+  Montana
+
+# Generate biased dataset (80% rural dropout at diagnostic stages)
+./run_synthea -s 160 -cs 160 -o false -p 20000 -a 30-100 \
+  --exporter.csv.export=true \
+  --exporter.csv.append_mode=false \
+  --exporter.baseDirectory=./output_rural_bias \
+  --module_override=./config/overrides_rural_sleep_apnea.properties \
+  Montana
+```
+
+### Running the Analysis Pipeline
+
+```bash
+cd ../sleep_apnea
+uv run python pipeline.py
+```
+
+This runs the complete pipeline: data loading → summary stats → model training → report generation.
+See `sleep_apnea/README.md` for full documentation.
+
 # License
 
 Copyright 2017-2023 The MITRE Corporation

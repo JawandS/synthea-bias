@@ -4,28 +4,56 @@ This case study demonstrates how healthcare access disparities can be introduced
 in synthetic patient data. We compare a baseline Synthea simulation against a biased version
 where rural patients experience higher dropout rates in the sleep apnea care pathway.
 
-## Technical overview
+## Quick Start
 
-### Primary Script
-- `scripts/report.py`: **Main entry point.** Generates a comprehensive case study report (`sleep_apnea_report.md`) combining all analyses: background, population statistics, underdiagnosis analysis, model training, and cross-dataset evaluation.
+Run the complete pipeline with a single command:
 
-### Supporting Scripts
-- `scripts/load_data.py`: copies the relevant CSV files from Synthea and appends the urban flag to `patients.csv`. Note, this filters `observations.csv` to only include BMI and smoking observations (avoiding large file size).
-- `scripts/summary_stats.py`: provides summary statistics on the datasets (should be very similar).
-- `scripts/models.py`: model training library used by `report.py`. Trains logistic regression, random forest, and gradient boosted decision tree models.
-- `scripts/analytics.py`: analytics library used by `report.py`. Implements pairwise rural/urban comparison and adjusted logistic regression.
-
-### Usage
 ```bash
-# Generate comprehensive report (includes model training)
-uv run python scripts/report.py
+# Full pipeline: load data → summary stats → train models → generate report
+uv run python pipeline.py
 
-# Generate report without model training (faster, analytics only)
-uv run python scripts/report.py --skip-models
+# Skip data loading (use existing data in data/ directory)
+uv run python pipeline.py --skip-data
 
-# Custom output path
-uv run python scripts/report.py --out output/my_report.md
+# Skip model training (faster, analytics only)
+uv run python pipeline.py --skip-models
+
+# Only print summary statistics
+uv run python pipeline.py --stats-only
 ```
+
+## Pipeline Overview
+
+The `pipeline.py` script runs the complete end-to-end workflow:
+
+1. **Load Data** - Copies CSV files from Synthea outputs, filters observations, appends urban/rural flag
+2. **Summary Statistics** - Prints population counts and rates for validation
+3. **Train Models** - Trains logistic regression, random forest, and gradient boosted models
+4. **Generate Report** - Creates comprehensive markdown report with all analyses
+
+### Pipeline Options
+
+| Flag | Description |
+|------|-------------|
+| `--skip-data` | Skip data loading, use existing `data/` directory |
+| `--skip-models` | Skip model training (faster, analytics only) |
+| `--stats-only` | Only print summary statistics |
+| `--baseline-source PATH` | Path to baseline Synthea output (default: `../synthea/output_baseline`) |
+| `--biased-source PATH` | Path to biased Synthea output (default: `../synthea/output_rural_bias`) |
+| `--report PATH` | Output path for markdown report |
+
+## Technical Overview
+
+### Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `pipeline.py` | **Main entry point.** Runs complete pipeline. |
+| `scripts/load_data.py` | Copies CSVs from Synthea, appends urban flag, filters observations |
+| `scripts/summary_stats.py` | Computes and prints summary statistics |
+| `scripts/models.py` | Model training library (logistic regression, RF, GBDT) |
+| `scripts/analytics.py` | Analytics library (pairwise comparison, adjusted regression) |
+| `scripts/report.py` | Report generation library |
 
 ## Data Generation
 
