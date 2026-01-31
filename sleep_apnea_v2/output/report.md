@@ -1,6 +1,6 @@
 # Sleep Apnea Underdiagnosis Bias: A Case Study
 
-Generated: 2026-01-31 16:52:53
+Generated: 2026-01-31 17:19:05
 
 ---
 
@@ -90,12 +90,12 @@ individuals with obesity, smoking history, and cardiovascular disease.
 
 | Metric | Value |
 |--------|-------|
-| Total patients | 3,708 |
-| Urban | 3,003 (81.0%) |
-| Rural | 705 (19.0%) |
-| Male | 1,944 |
-| Female | 1,764 |
-| Sleep apnea cases | 350 (9.4%) |
+| Total patients | 22,903 |
+| Urban | 18,632 (81.4%) |
+| Rural | 4,271 (18.6%) |
+| Male | 12,427 |
+| Female | 10,476 |
+| Sleep apnea cases | 2,160 (9.4%) |
 
 ---
 
@@ -118,9 +118,9 @@ but never receive a formal diagnosis due to barriers to care.
 
 | Metric | Value |
 |--------|-------|
-| Rural patients with sleep apnea | 62 |
-| Patients masked (underdiagnosed) | 18 |
-| Effective mask rate | 29.0% |
+| Rural patients with sleep apnea | 390 |
+| Patients masked (underdiagnosed) | 117 |
+| Effective mask rate | 30.0% |
 
 ### Prevalence Impact
 
@@ -129,17 +129,17 @@ affecting rural populations:
 
 | Location | Before Cases | Before % | After Cases | After % | Change |
 |----------|--------------|----------|-------------|---------|--------|
-| Urban | 288 | 9.59% | 288 | 9.59% | +0.00% |
-| Rural | 62 | 8.79% | 44 | 6.24% | -2.55% |
+| Urban | 1,770 | 9.50% | 1,770 | 9.50% | +0.00% |
+| Rural | 390 | 9.13% | 273 | 6.39% | -2.74% |
 
 **By Gender and Location**:
 
 | Group | Before Cases | Before % | After Cases | After % | Change |
 |-------|--------------|----------|-------------|---------|--------|
-| Male Urban | 209 | 13.25% | 209 | 13.25% | +0.00% |
-| Male Rural | 46 | 12.53% | 33 | 8.99% | -3.54% |
-| Female Urban | 79 | 5.54% | 79 | 5.54% | +0.00% |
-| Female Rural | 16 | 4.73% | 11 | 3.25% | -1.48% |
+| Male Urban | 1,281 | 12.65% | 1,281 | 12.65% | +0.00% |
+| Male Rural | 273 | 11.86% | 199 | 8.64% | -3.21% |
+| Female Urban | 489 | 5.75% | 489 | 5.75% | +0.00% |
+| Female Rural | 117 | 5.94% | 74 | 3.76% | -2.18% |
 
 
 ---
@@ -194,56 +194,56 @@ point that maximizes F1 score on the validation set.
 | Parameter | Value |
 |-----------|-------|
 | Method | f1 (maximize F1 on validation set) |
-| Baseline threshold | 0.1469 |
-| Biased threshold | 0.1542 |
+| Baseline threshold | 0.1405 |
+| Biased threshold | 0.1233 |
 
 ### Overall Performance
 
 | Metric | Baseline | Biased | Delta |
 |--------|----------|--------|-------|
-| AUC-ROC | 0.6498 | 0.6348 | -0.0150 |
-| Avg Precision | 0.1531 | 0.1510 | -0.0021 |
-| F1 Score | 0.2236 | 0.2400 | +0.0164 |
-| Precision | 0.1667 | 0.1856 | +0.0189 |
-| Recall | 0.3396 | 0.3396 | +0.0000 |
-| Accuracy | 0.7756 | 0.7953 | +0.0197 |
+| AUC-ROC | 0.6457 | 0.6467 | +0.0010 |
+| Avg Precision | 0.1445 | 0.1492 | +0.0047 |
+| F1 Score | 0.2245 | 0.2219 | -0.0027 |
+| Precision | 0.1559 | 0.1516 | -0.0043 |
+| Recall | 0.4012 | 0.4136 | +0.0123 |
+| Accuracy | 0.7386 | 0.7264 | -0.0122 |
 
 ### Test Set Composition
 
 | Subgroup | Patients | Apnea Cases | Prevalence |
 |----------|----------|-------------|------------|
-| Urban | 462 | 44 | 9.52% |
-| Rural | 95 | 9 | 9.47% |
+| Urban | 2,801 | 262 | 9.35% |
+| Rural | 635 | 62 | 9.76% |
 
 ### Subgroup AUC-ROC
 
 | Subgroup | Baseline | Biased | Delta |
 |----------|----------|--------|-------|
-| Urban | 0.6334 | 0.6328 | -0.0005 |
-| Rural | 0.7558 | 0.6744 | -0.0814 |
+| Urban | 0.6358 | 0.6410 | +0.0052 |
+| Rural | 0.6927 | 0.6988 | +0.0061 |
 
 ### Subgroup Recall
 
 | Subgroup | Baseline | Biased | Delta |
 |----------|----------|--------|-------|
-| Urban | 0.3864 | 0.3864 | +0.0000 |
-| Rural | 0.1111 | 0.1111 | +0.0000 |
+| Urban | 0.4237 | 0.4733 | +0.0496 |
+| Rural | 0.3065 | 0.1613 | -0.1452 |
 
 ### Subgroup F1 Score
 
 | Subgroup | Baseline | Biased | Delta |
 |----------|----------|--------|-------|
-| Urban | 0.2345 | 0.2482 | +0.0137 |
-| Rural | 0.1250 | 0.1538 | +0.0288 |
+| Urban | 0.2265 | 0.2267 | +0.0002 |
+| Rural | 0.2135 | 0.1754 | -0.0380 |
 
 ### Key Model Findings
 
-- **Rural AUC degradation**: -0.0814 (from 0.7558 to 0.6744)
+- **Rural AUC degradation**: +0.0061 (from 0.6927 to 0.6988)
   - The biased model has reduced ability to discriminate sleep apnea in rural patients
-- **Urban AUC change**: -0.0005 (relatively stable)
-- **Disparity gap**: Rural AUC changes by -0.0814 vs Urban by -0.0005
+- **Urban AUC change**: +0.0052 (relatively stable)
+- **Disparity gap**: Rural AUC changes by +0.0061 vs Urban by +0.0052
   - Bias introduces/widens performance gap between subgroups
-- **Threshold shift**: Biased model uses lower threshold (0.1542 vs 0.1469)
+- **Threshold shift**: Biased model uses lower threshold (0.1233 vs 0.1405)
   - Compensates for reduced signal from missing rural positives in training
 
 
@@ -315,7 +315,7 @@ uv run python scripts/3_train_models.py
 uv run python scripts/4_create_report.py
 ```
 
-**This run**: 3,708 patients generated
+**This run**: 22,903 patients generated
 
 ---
 
