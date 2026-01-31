@@ -4,17 +4,22 @@
 
 This script:
 1. Runs Synthea to generate a baseline population with sleep apnea cases
-2. Copies relevant CSV files to the local data/ directory
-3. Adds urban/rural flag to patients based on county FIPS codes
+2. Copies relevant CSV files to output/data/
+3. Adds urban/rural flag to patients via SDoH county lookup
+4. Filters observations to only include relevant codes (BMI, smoking)
+5. Generates summary statistics in output/info/summary_stats.md
 
 Usage:
     uv run python scripts/1_generate_data.py [--population N] [--seed N] [--skip-synthea]
 """
 
+from __future__ import annotations
+
 import argparse
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -22,62 +27,61 @@ import pandas as pd
 # Paths (relative to this script's location in scripts/)
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = SCRIPT_DIR.parent
-SYNTHEA_DIR = PROJECT_DIR.parent / "synthea"
-DATA_DIR = PROJECT_DIR / "data"
+REPO_ROOT = PROJECT_DIR.parent
+SYNTHEA_DIR = REPO_ROOT / "synthea"
 
-# Synthea output directory (inside synthea folder)
+# Output directories
+OUTPUT_DIR = PROJECT_DIR / "output"
+DATA_DIR = OUTPUT_DIR / "data"
+INFO_DIR = OUTPUT_DIR / "info"
+
+# Synthea output directory
 SYNTHEA_OUTPUT_DIR = SYNTHEA_DIR / "output_sleep_apnea_v2"
 
-# Files to copy from Synthea output
-REQUIRED_FILES = ["patients.csv", "conditions.csv", "observations.csv"]
+# SDoH file with URBAN column
+SDOH_PATH = SYNTHEA_DIR / "src" / "main" / "resources" / "geography" / "sdoh.csv"
 
-# Montana rural counties (FIPS codes for counties with population < 50k)
-# Source: US Census Bureau urban/rural classification
-RURAL_FIPS = {
-    "30001", "30003", "30005", "30007", "30009", "30011", "30013", "30015",
-    "30017", "30019", "30021", "30023", "30025", "30027", "30029", "30031",
-    "30033", "30035", "30037", "30039", "30041", "30043", "30045", "30047",
-    "30049", "30051", "30053", "30055", "30057", "30059", "30061", "30063",
-    "30065", "30067", "30069", "30071", "30073", "30075", "30077", "30079",
-    "30081", "30083", "30085", "30087", "30089", "30091", "30093", "30095",
-    "30097", "30099", "30101", "30103", "30105", "30107", "30109", "30111",
-}
+# Files to copy from Synthea output
+RELEVANT_FILES = ["patients.csv", "conditions.csv", "observations.csv"]
+
+# Observation codes to keep (BMI and smoking status)
+OBSERVATION_CODES = {"39156-5", "72166-2"}
+
+# Condition codes
+SLEEP_APNEA_CODES = {"73430006", "78275009"}
+HYPERTENSION_CODE = "59621000"
+CHF_CODE = "88805009"
+OBESITY_CODE = "162864005"
 
 
 def run_synthea(population: int, seed: int) -> None:
-    """Run Synthea to generate synthetic patient data.
+    """Run Synthea to generate synthetic patient data."""
+    if SYNTHEA_OUTPUT_DIR.exists():
+        print(f"Clearing old output: {SYNTHEA_OUTPUT_DIR}")
+        shutil.rmtree(SYNTHEA_OUTPUT_DIR)
 
-    Args:
-        population: Number of patients to generate
-        seed: Random seed for reproducibility
-    """
     print(f"Running Synthea: {population} patients, seed={seed}")
-    print(f"Output directory: {SYNTHEA_OUTPUT_DIR}")
 
     cmd = [
         "./run_synthea",
         "-s", str(seed),
         "-cs", str(seed),
         "-p", str(population),
-        "-a", "60-100",  # Ages 60-100 ensures all patients evaluated for sleep apnea
+        "-a", "60-100",
+        "--generate.only_alive_patients=false",
         "--exporter.csv.export=true",
         "--exporter.csv.append_mode=false",
         "--exporter.fhir.export=false",
         "--exporter.ccda.export=false",
         "--exporter.hospital.fhir.export=false",
         "--exporter.practitioner.fhir.export=false",
-        "--exporter.years_of_history=0",  # Export full patient history
+        "--exporter.years_of_history=0",
         f"--exporter.baseDirectory={SYNTHEA_OUTPUT_DIR.name}",
-        "Montana",  # State with rural counties
+        "Montana",
     ]
 
     print(f"Command: {' '.join(cmd)}")
-
-    result = subprocess.run(
-        cmd,
-        cwd=SYNTHEA_DIR,
-        capture_output=False,
-    )
+    result = subprocess.run(cmd, cwd=SYNTHEA_DIR)
 
     if result.returncode != 0:
         print(f"Synthea failed with return code {result.returncode}", file=sys.stderr)
@@ -86,118 +90,213 @@ def run_synthea(population: int, seed: int) -> None:
     print("Synthea completed successfully")
 
 
+def load_sdoh_urban_map() -> dict[tuple[str, str], bool]:
+    """Return a mapping of (STATE, COUNTY) -> URBAN flag from SDoH data."""
+    if not SDOH_PATH.exists():
+        raise FileNotFoundError(f"SDoH file not found: {SDOH_PATH}")
+
+    sdoh = pd.read_csv(SDOH_PATH, usecols=["STATE", "COUNTY", "URBAN"])
+    sdoh["STATE"] = sdoh["STATE"].astype(str).str.strip().str.upper()
+    sdoh["COUNTY"] = sdoh["COUNTY"].astype(str).str.strip().str.upper()
+    sdoh = sdoh.dropna(subset=["STATE", "COUNTY", "URBAN"]).drop_duplicates(["STATE", "COUNTY"])
+
+    return {
+        (str(row["STATE"]), str(row["COUNTY"])): bool(row["URBAN"])
+        for _, row in sdoh.iterrows()
+    }
+
+
+def append_urban_column(patients: pd.DataFrame, urban_map: dict[tuple[str, str], bool]) -> pd.DataFrame:
+    """Append URBAN column to patients DataFrame via SDoH lookup."""
+    patients = patients.copy()
+    state_key = patients["STATE"].astype(str).str.strip().str.upper()
+    county_key = patients["COUNTY"].astype(str).str.strip().str.upper()
+    patients["URBAN"] = [
+        urban_map.get((s, c)) for s, c in zip(state_key, county_key)
+    ]
+    return patients
+
+
+def filter_observations(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only observations needed for modeling (BMI + smoking status)."""
+    return df[df["CODE"].astype(str).isin(OBSERVATION_CODES)].copy()
+
+
 def copy_and_process_data() -> None:
-    """Copy CSV files from Synthea output and add urban/rural flag."""
+    """Copy CSV files from Synthea output, add urban flag, filter observations."""
     csv_dir = SYNTHEA_OUTPUT_DIR / "csv"
 
     if not csv_dir.exists():
         print(f"Error: Synthea output not found at {csv_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Create data directory if needed
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    INFO_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Copy required files
-    for filename in REQUIRED_FILES:
+    print("Loading SDoH urban/rural mapping...")
+    urban_map = load_sdoh_urban_map()
+    print(f"  Loaded {len(urban_map):,} county mappings")
+
+    for filename in RELEVANT_FILES:
         src = csv_dir / filename
         dst = DATA_DIR / filename
 
         if not src.exists():
-            print(f"Warning: {filename} not found in Synthea output", file=sys.stderr)
+            print(f"Warning: {filename} not found", file=sys.stderr)
             continue
 
-        shutil.copy2(src, dst)
-        print(f"Copied {filename} ({src.stat().st_size:,} bytes)")
+        df = pd.read_csv(src)
 
-    # Add urban/rural flag to patients
-    patients_path = DATA_DIR / "patients.csv"
-    if patients_path.exists():
-        add_urban_flag(patients_path)
+        if filename == "patients.csv":
+            df = append_urban_column(df, urban_map)
+        elif filename == "observations.csv":
+            original_len = len(df)
+            df = filter_observations(df)
+            print(f"  Filtered observations: {original_len:,} -> {len(df):,}")
 
-
-def add_urban_flag(patients_path: Path) -> None:
-    """Add 'urban' column to patients CSV based on county FIPS code.
-
-    Args:
-        patients_path: Path to patients.csv file
-    """
-    print("Adding urban/rural flag to patients...")
-
-    df = pd.read_csv(patients_path, dtype={"FIPS": str})
-
-    # Determine urban status based on FIPS code
-    # Urban = True if FIPS not in rural set
-    df["urban"] = ~df["FIPS"].isin(RURAL_FIPS)
-
-    # Save updated file
-    df.to_csv(patients_path, index=False)
-
-    # Print summary
-    n_urban = df["urban"].sum()
-    n_rural = len(df) - n_urban
-    print(f"  Urban patients: {n_urban:,} ({100*n_urban/len(df):.1f}%)")
-    print(f"  Rural patients: {n_rural:,} ({100*n_rural/len(df):.1f}%)")
+        df.to_csv(dst, index=False)
+        print(f"Wrote {filename} ({dst.stat().st_size:,} bytes)")
 
 
-def print_summary() -> None:
-    """Print summary statistics of the generated data."""
+def compute_stats(patients: pd.DataFrame, conditions: pd.DataFrame, observations: pd.DataFrame) -> dict:
+    """Compute summary statistics from the data."""
+    n_patients = len(patients)
+    codes = conditions["CODE"].astype(str)
+
+    # Helper to count patients with a condition
+    def patients_with_code(code_set: set) -> int:
+        return conditions[codes.isin(code_set)]["PATIENT"].nunique()
+
+    # Helper to get patient IDs with a condition
+    def patient_ids_with_code(code_set: set) -> set:
+        return set(conditions[codes.isin(code_set)]["PATIENT"].unique())
+
+    # Urban/rural counts
+    urban = patients[patients["URBAN"] == True]
+    rural = patients[patients["URBAN"] == False]
+    n_urban = len(urban)
+    n_rural = len(rural)
+
+    # Condition counts
+    apnea_ids = patient_ids_with_code(SLEEP_APNEA_CODES)
+    n_apnea = len(apnea_ids)
+    n_hypertension = patients_with_code({HYPERTENSION_CODE})
+    n_chf = patients_with_code({CHF_CODE})
+
+    # Urban/rural apnea breakdown
+    urban_apnea = len(apnea_ids & set(urban["Id"]))
+    rural_apnea = len(apnea_ids & set(rural["Id"]))
+
+    # BMI stats (code 39156-5)
+    bmi_obs = observations[observations["CODE"].astype(str) == "39156-5"]
+    n_with_bmi = bmi_obs["PATIENT"].nunique()
+
+    # Smoking stats (code 72166-2)
+    smoking_obs = observations[observations["CODE"].astype(str) == "72166-2"]
+    n_with_smoking = smoking_obs["PATIENT"].nunique()
+
+    return {
+        "n_patients": n_patients,
+        "n_urban": n_urban,
+        "n_rural": n_rural,
+        "pct_urban": 100 * n_urban / n_patients if n_patients else 0,
+        "pct_rural": 100 * n_rural / n_patients if n_patients else 0,
+        "n_apnea": n_apnea,
+        "pct_apnea": 100 * n_apnea / n_patients if n_patients else 0,
+        "urban_apnea": urban_apnea,
+        "pct_urban_apnea": 100 * urban_apnea / n_urban if n_urban else 0,
+        "rural_apnea": rural_apnea,
+        "pct_rural_apnea": 100 * rural_apnea / n_rural if n_rural else 0,
+        "n_hypertension": n_hypertension,
+        "pct_hypertension": 100 * n_hypertension / n_patients if n_patients else 0,
+        "n_chf": n_chf,
+        "pct_chf": 100 * n_chf / n_patients if n_patients else 0,
+        "n_with_bmi": n_with_bmi,
+        "pct_with_bmi": 100 * n_with_bmi / n_patients if n_patients else 0,
+        "n_with_smoking": n_with_smoking,
+        "pct_with_smoking": 100 * n_with_smoking / n_patients if n_patients else 0,
+    }
+
+
+def write_summary_stats(stats: dict, population: int, seed: int) -> None:
+    """Write summary statistics to markdown file."""
+    md_path = INFO_DIR / "summary_stats.md"
+
+    content = f"""# Data Generation Summary
+
+Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Parameters
+
+| Parameter | Value |
+|-----------|-------|
+| Population | {population:,} |
+| Seed | {seed} |
+| Age Range | 60-100 |
+| State | Montana |
+
+## Population Summary
+
+| Metric | Count | Percentage |
+|--------|------:|----------:|
+| Total patients | {stats['n_patients']:,} | 100.00% |
+| Urban patients | {stats['n_urban']:,} | {stats['pct_urban']:.2f}% |
+| Rural patients | {stats['n_rural']:,} | {stats['pct_rural']:.2f}% |
+
+## Condition Prevalence
+
+| Condition | Count | Prevalence |
+|-----------|------:|-----------:|
+| Sleep apnea | {stats['n_apnea']:,} | {stats['pct_apnea']:.2f}% |
+| Hypertension | {stats['n_hypertension']:,} | {stats['pct_hypertension']:.2f}% |
+| CHF | {stats['n_chf']:,} | {stats['pct_chf']:.2f}% |
+
+## Sleep Apnea by Location
+
+| Location | Patients | Apnea Cases | Prevalence |
+|----------|----------|-------------|------------|
+| Urban | {stats['n_urban']:,} | {stats['urban_apnea']:,} | {stats['pct_urban_apnea']:.2f}% |
+| Rural | {stats['n_rural']:,} | {stats['rural_apnea']:,} | {stats['pct_rural_apnea']:.2f}% |
+
+## Feature Availability
+
+| Feature | Patients with Data | Coverage |
+|---------|-------------------:|---------:|
+| BMI | {stats['n_with_bmi']:,} | {stats['pct_with_bmi']:.2f}% |
+| Smoking status | {stats['n_with_smoking']:,} | {stats['pct_with_smoking']:.2f}% |
+"""
+
+    md_path.write_text(content)
+    print(f"Wrote {md_path}")
+
+
+def generate_summary(population: int, seed: int) -> None:
+    """Generate and save summary statistics."""
     print("\n" + "=" * 60)
-    print("Data Summary")
+    print("Generating Summary Statistics")
     print("=" * 60)
 
-    # Load data
     patients = pd.read_csv(DATA_DIR / "patients.csv")
     conditions = pd.read_csv(DATA_DIR / "conditions.csv")
+    observations = pd.read_csv(DATA_DIR / "observations.csv")
 
-    print(f"\nPatients: {len(patients):,}")
+    stats = compute_stats(patients, conditions, observations)
+    write_summary_stats(stats, population, seed)
 
-    # Sleep apnea codes (SNOMED)
-    apnea_codes = {"73430006", "78275009"}
-    apnea_conditions = conditions[conditions["CODE"].astype(str).isin(apnea_codes)]
-    apnea_patients = apnea_conditions["PATIENT"].nunique()
-
-    print(f"Sleep apnea cases: {apnea_patients:,} ({100*apnea_patients/len(patients):.2f}%)")
-
-    # Urban/rural breakdown
-    if "urban" in patients.columns:
-        urban_patients = patients[patients["urban"] == True]
-        rural_patients = patients[patients["urban"] == False]
-
-        urban_apnea = apnea_conditions[
-            apnea_conditions["PATIENT"].isin(urban_patients["Id"])
-        ]["PATIENT"].nunique()
-        rural_apnea = apnea_conditions[
-            apnea_conditions["PATIENT"].isin(rural_patients["Id"])
-        ]["PATIENT"].nunique()
-
-        print(f"\nUrban patients: {len(urban_patients):,}")
-        print(f"  Sleep apnea: {urban_apnea:,} ({100*urban_apnea/len(urban_patients):.2f}%)")
-        print(f"\nRural patients: {len(rural_patients):,}")
-        print(f"  Sleep apnea: {rural_apnea:,} ({100*rural_apnea/len(rural_patients):.2f}%)")
+    # Print to console
+    print(f"\nPatients: {stats['n_patients']:,}")
+    print(f"  Urban: {stats['n_urban']:,} ({stats['pct_urban']:.1f}%)")
+    print(f"  Rural: {stats['n_rural']:,} ({stats['pct_rural']:.1f}%)")
+    print(f"\nSleep apnea: {stats['n_apnea']:,} ({stats['pct_apnea']:.2f}%)")
+    print(f"  Urban: {stats['urban_apnea']:,} ({stats['pct_urban_apnea']:.2f}%)")
+    print(f"  Rural: {stats['rural_apnea']:,} ({stats['pct_rural_apnea']:.2f}%)")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate synthetic patient data using Synthea"
-    )
-    parser.add_argument(
-        "--population", "-p",
-        type=int,
-        default=5000,
-        help="Number of patients to generate (default: 5000)"
-    )
-    parser.add_argument(
-        "--seed", "-s",
-        type=int,
-        default=42,
-        help="Random seed for reproducibility (default: 42)"
-    )
-    parser.add_argument(
-        "--skip-synthea",
-        action="store_true",
-        help="Skip Synthea generation, only copy existing data"
-    )
-
+    parser = argparse.ArgumentParser(description="Generate synthetic patient data using Synthea")
+    parser.add_argument("--population", "-p", type=int, default=5000, help="Number of patients (default: 5000)")
+    parser.add_argument("--seed", "-s", type=int, default=42, help="Random seed (default: 42)")
+    parser.add_argument("--skip-synthea", action="store_true", help="Skip Synthea, only copy existing data")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -210,11 +309,10 @@ def main():
         print("Skipping Synthea generation (--skip-synthea)")
 
     copy_and_process_data()
-    print_summary()
+    generate_summary(args.population, args.seed)
 
     print("\n" + "=" * 60)
-    print("Data generation complete!")
-    print(f"Output directory: {DATA_DIR}")
+    print(f"Complete! Output: {OUTPUT_DIR}")
     print("=" * 60)
 
 
