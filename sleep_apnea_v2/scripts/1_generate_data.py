@@ -163,9 +163,18 @@ def compute_stats(patients: pd.DataFrame, conditions: pd.DataFrame, observations
     n_patients = len(patients)
     codes = conditions["CODE"].astype(str)
 
-    # Helper to count patients with a condition
-    def patients_with_code(code_set: set) -> int:
-        return conditions[codes.isin(code_set)]["PATIENT"].nunique()
+    # Calculate age from birthdate
+    patients = patients.copy()
+    patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"])
+    reference_date = patients["BIRTHDATE"].max() + pd.DateOffset(years=70)  # Approximate reference
+    patients["age"] = ((reference_date - patients["BIRTHDATE"]).dt.days / 365.25).astype(int)
+
+    # Age decades
+    patients["decade"] = pd.cut(
+        patients["age"],
+        bins=[0, 69, 79, 89, 150],
+        labels=["60-69", "70-79", "80-89", "90+"]
+    )
 
     # Helper to get patient IDs with a condition
     def patient_ids_with_code(code_set: set) -> set:
@@ -177,15 +186,75 @@ def compute_stats(patients: pd.DataFrame, conditions: pd.DataFrame, observations
     n_urban = len(urban)
     n_rural = len(rural)
 
+    # Gender counts
+    male = patients[patients["GENDER"] == "M"]
+    female = patients[patients["GENDER"] == "F"]
+
     # Condition counts
     apnea_ids = patient_ids_with_code(SLEEP_APNEA_CODES)
     n_apnea = len(apnea_ids)
-    n_hypertension = patients_with_code({HYPERTENSION_CODE})
-    n_chf = patients_with_code({CHF_CODE})
+    n_hypertension = len(patient_ids_with_code({HYPERTENSION_CODE}))
+    n_chf = len(patient_ids_with_code({CHF_CODE}))
 
     # Urban/rural apnea breakdown
     urban_apnea = len(apnea_ids & set(urban["Id"]))
     rural_apnea = len(apnea_ids & set(rural["Id"]))
+
+    # Gender apnea breakdown
+    male_apnea = len(apnea_ids & set(male["Id"]))
+    female_apnea = len(apnea_ids & set(female["Id"]))
+
+    # Age decade breakdown
+    decade_stats = []
+    for decade in ["60-69", "70-79", "80-89", "90+"]:
+        decade_patients = patients[patients["decade"] == decade]
+        n_decade = len(decade_patients)
+        decade_apnea = len(apnea_ids & set(decade_patients["Id"]))
+        decade_stats.append({
+            "decade": decade,
+            "n": n_decade,
+            "apnea": decade_apnea,
+            "pct": 100 * decade_apnea / n_decade if n_decade else 0,
+        })
+
+    # Comprehensive cross-tabulation (gender x location x decade)
+    cross_stats = []
+    for gender in ["M", "F"]:
+        for location in [True, False]:  # Urban, Rural
+            for decade in ["60-69", "70-79", "80-89", "90+"]:
+                subset = patients[
+                    (patients["GENDER"] == gender) &
+                    (patients["URBAN"] == location) &
+                    (patients["decade"] == decade)
+                ]
+                n_subset = len(subset)
+                subset_apnea = len(apnea_ids & set(subset["Id"]))
+                cross_stats.append({
+                    "gender": "Male" if gender == "M" else "Female",
+                    "location": "Urban" if location else "Rural",
+                    "decade": decade,
+                    "n": n_subset,
+                    "apnea": subset_apnea,
+                    "pct": 100 * subset_apnea / n_subset if n_subset else 0,
+                })
+
+    # Gender x Location summary (without decade)
+    gender_location_stats = []
+    for gender in ["M", "F"]:
+        for location in [True, False]:
+            subset = patients[
+                (patients["GENDER"] == gender) &
+                (patients["URBAN"] == location)
+            ]
+            n_subset = len(subset)
+            subset_apnea = len(apnea_ids & set(subset["Id"]))
+            gender_location_stats.append({
+                "gender": "Male" if gender == "M" else "Female",
+                "location": "Urban" if location else "Rural",
+                "n": n_subset,
+                "apnea": subset_apnea,
+                "pct": 100 * subset_apnea / n_subset if n_subset else 0,
+            })
 
     # BMI stats (code 39156-5)
     bmi_obs = observations[observations["CODE"].astype(str) == "39156-5"]
@@ -201,12 +270,23 @@ def compute_stats(patients: pd.DataFrame, conditions: pd.DataFrame, observations
         "n_rural": n_rural,
         "pct_urban": 100 * n_urban / n_patients if n_patients else 0,
         "pct_rural": 100 * n_rural / n_patients if n_patients else 0,
+        "n_male": len(male),
+        "n_female": len(female),
+        "pct_male": 100 * len(male) / n_patients if n_patients else 0,
+        "pct_female": 100 * len(female) / n_patients if n_patients else 0,
         "n_apnea": n_apnea,
         "pct_apnea": 100 * n_apnea / n_patients if n_patients else 0,
         "urban_apnea": urban_apnea,
         "pct_urban_apnea": 100 * urban_apnea / n_urban if n_urban else 0,
         "rural_apnea": rural_apnea,
         "pct_rural_apnea": 100 * rural_apnea / n_rural if n_rural else 0,
+        "male_apnea": male_apnea,
+        "pct_male_apnea": 100 * male_apnea / len(male) if len(male) else 0,
+        "female_apnea": female_apnea,
+        "pct_female_apnea": 100 * female_apnea / len(female) if len(female) else 0,
+        "decade_stats": decade_stats,
+        "cross_stats": cross_stats,
+        "gender_location_stats": gender_location_stats,
         "n_hypertension": n_hypertension,
         "pct_hypertension": 100 * n_hypertension / n_patients if n_patients else 0,
         "n_chf": n_chf,
@@ -222,6 +302,24 @@ def write_summary_stats(stats: dict, population: int, seed: int) -> None:
     """Write summary statistics to markdown file."""
     md_path = INFO_DIR / "summary_stats.md"
 
+    # Build decade table rows
+    decade_rows = "\n".join(
+        f"| {d['decade']} | {d['n']:,} | {d['apnea']:,} | {d['pct']:.2f}% |"
+        for d in stats["decade_stats"]
+    )
+
+    # Build gender x location table rows
+    gender_location_rows = "\n".join(
+        f"| {d['gender']} | {d['location']} | {d['n']:,} | {d['apnea']:,} | {d['pct']:.2f}% |"
+        for d in stats["gender_location_stats"]
+    )
+
+    # Build comprehensive cross-tab table rows
+    cross_rows = "\n".join(
+        f"| {d['gender']} | {d['location']} | {d['decade']} | {d['n']:,} | {d['apnea']:,} | {d['pct']:.2f}% |"
+        for d in stats["cross_stats"]
+    )
+
     content = f"""# Data Generation Summary
 
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -230,7 +328,8 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 | Parameter | Value |
 |-----------|-------|
-| Population | {population:,} |
+| Population requested | {population:,} |
+| Population generated | {stats['n_patients']:,} |
 | Seed | {seed} |
 | Age Range | 60-100 |
 | State | Montana |
@@ -240,8 +339,10 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 | Metric | Count | Percentage |
 |--------|------:|----------:|
 | Total patients | {stats['n_patients']:,} | 100.00% |
-| Urban patients | {stats['n_urban']:,} | {stats['pct_urban']:.2f}% |
-| Rural patients | {stats['n_rural']:,} | {stats['pct_rural']:.2f}% |
+| Urban | {stats['n_urban']:,} | {stats['pct_urban']:.2f}% |
+| Rural | {stats['n_rural']:,} | {stats['pct_rural']:.2f}% |
+| Male | {stats['n_male']:,} | {stats['pct_male']:.2f}% |
+| Female | {stats['n_female']:,} | {stats['pct_female']:.2f}% |
 
 ## Condition Prevalence
 
@@ -257,6 +358,31 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 |----------|----------|-------------|------------|
 | Urban | {stats['n_urban']:,} | {stats['urban_apnea']:,} | {stats['pct_urban_apnea']:.2f}% |
 | Rural | {stats['n_rural']:,} | {stats['rural_apnea']:,} | {stats['pct_rural_apnea']:.2f}% |
+
+## Sleep Apnea by Gender
+
+| Gender | Patients | Apnea Cases | Prevalence |
+|--------|----------|-------------|------------|
+| Male | {stats['n_male']:,} | {stats['male_apnea']:,} | {stats['pct_male_apnea']:.2f}% |
+| Female | {stats['n_female']:,} | {stats['female_apnea']:,} | {stats['pct_female_apnea']:.2f}% |
+
+## Sleep Apnea by Age Decade
+
+| Age Group | Patients | Apnea Cases | Prevalence |
+|-----------|----------|-------------|------------|
+{decade_rows}
+
+## Sleep Apnea by Gender and Location
+
+| Gender | Location | Patients | Apnea Cases | Prevalence |
+|--------|----------|----------|-------------|------------|
+{gender_location_rows}
+
+## Comprehensive Prevalence (Gender x Location x Age)
+
+| Gender | Location | Age Group | Patients | Apnea Cases | Prevalence |
+|--------|----------|-----------|----------|-------------|------------|
+{cross_rows}
 
 ## Feature Availability
 
