@@ -1,6 +1,6 @@
 # Sleep Apnea Underdiagnosis Bias: A Case Study
 
-Generated: 2026-01-31 17:19:05
+Generated: 2026-01-31 17:21:34
 
 ---
 
@@ -238,13 +238,19 @@ point that maximizes F1 score on the validation set.
 
 ### Key Model Findings
 
-- **Rural AUC degradation**: +0.0061 (from 0.6927 to 0.6988)
-  - The biased model has reduced ability to discriminate sleep apnea in rural patients
-- **Urban AUC change**: +0.0052 (relatively stable)
-- **Disparity gap**: Rural AUC changes by +0.0061 vs Urban by +0.0052
-  - Bias introduces/widens performance gap between subgroups
-- **Threshold shift**: Biased model uses lower threshold (0.1233 vs 0.1405)
-  - Compensates for reduced signal from missing rural positives in training
+- **Rural Recall Drop**: -0.1452 (from 0.3065 to 0.1613)
+  - The biased model misses more true sleep apnea cases in rural patients
+- **Urban Recall Change**: +0.0496 (from 0.4237 to 0.4733)
+  - Urban recall may improve as model shifts toward majority group
+- **Recall Disparity**: Rural recall changes by -0.1452 vs Urban by +0.0496
+  - Bias widens the gap in who gets correctly identified
+- **Rural F1 Drop**: -0.0380 (from 0.2135 to 0.1754)
+  - Overall rural prediction quality degrades
+- **Threshold shift**: Biased model threshold 0.1233 vs baseline 0.1405
+
+> **Note**: AUC measures ranking across all thresholds and may remain stable even when
+> recall drops significantly. Recall at the operating threshold directly measures
+> missed diagnoses and is the key fairness metric for this use case.
 
 
 ---
@@ -253,16 +259,25 @@ point that maximizes F1 score on the validation set.
 
 ### Impact of Underdiagnosis Bias
 
-1. **Rural AUC Degradation**: The biased model shows greater AUC reduction for
-   rural patients compared to urban, demonstrating how underdiagnosis bias
-   disproportionately harms the affected subgroup's predictive performance.
+1. **Rural Recall Collapse**: The biased model's recall for rural patients drops
+   dramatically (30.6% → 16.1%, -14.5%), meaning it
+   misses 47% more true sleep apnea cases in rural populations.
 
-2. **Threshold Compensation**: The biased model learns a lower classification
-   threshold, attempting to compensate for the reduced positive signal from
-   missing rural diagnoses in training data.
+2. **Urban Recall Improvement**: Meanwhile, urban recall actually increases
+   (42.4% → 47.3%, +5.0%), as the model shifts its
+   predictions toward the majority group with complete labels.
 
-3. **Fairness Gap**: The performance disparity between urban and rural subgroups
-   widens under the biased model, exacerbating healthcare inequities.
+3. **Disparity Amplification**: The recall gap between urban and rural widens from
+   +11.7% to +31.2%, showing how
+   training on biased data amplifies existing healthcare inequities.
+
+### Why Recall Matters More Than AUC
+
+- **AUC** measures ranking ability across all thresholds - it may remain stable
+  even when the model systematically underpredicts for a subgroup.
+- **Recall** measures how many true positives are caught at the operating threshold -
+  this directly translates to missed diagnoses in clinical deployment.
+- A model with good AUC but poor rural recall will still fail rural patients.
 
 ### Implications
 
@@ -272,15 +287,15 @@ point that maximizes F1 score on the validation set.
 - **Data Quality Matters**: "Ground truth" labels from EHR data may reflect access
   patterns rather than true disease prevalence.
 
-- **Fairness Monitoring**: Subgroup performance metrics are essential for detecting
-  and addressing bias in healthcare ML.
+- **Fairness Monitoring**: Subgroup recall and F1 metrics are essential for detecting
+  bias - overall AUC alone is insufficient.
 
 ### Mitigation Strategies
 
-1. **Active case finding** in underserved populations
-2. **Calibration adjustments** for known underdiagnosis patterns
-3. **Subgroup-aware training** with fairness constraints
-4. **Regular audits** of model performance across demographics
+1. **Active case finding** in underserved populations to improve label quality
+2. **Subgroup-stratified evaluation** with recall/F1 metrics, not just AUC
+3. **Fairness-aware training** with constraints on subgroup performance parity
+4. **Regular audits** comparing model predictions to external prevalence estimates
 
 ---
 

@@ -1,6 +1,6 @@
 # Model Training Report
 
-Generated: 2026-01-31 17:19:00
+Generated: 2026-01-31 17:21:28
 
 ## Model Specification
 
@@ -104,10 +104,16 @@ Generated: 2026-01-31 17:19:00
 
 ## Key Findings
 
-- **Rural AUC degradation**: +0.0061 (from 0.6927 to 0.6988)
-  - The biased model has reduced ability to discriminate sleep apnea in rural patients
-- **Urban AUC change**: +0.0052 (relatively stable)
-- **Disparity gap**: Rural AUC changes by +0.0061 vs Urban by +0.0052
-  - Bias introduces/widens performance gap between subgroups
-- **Threshold shift**: Biased model uses lower threshold (0.1233 vs 0.1405)
-  - Compensates for reduced signal from missing rural positives in training
+- **Rural Recall Drop**: -0.1452 (from 0.3065 to 0.1613)
+  - The biased model misses more true sleep apnea cases in rural patients
+- **Urban Recall Change**: +0.0496 (from 0.4237 to 0.4733)
+  - Urban recall may improve as model shifts toward majority group
+- **Recall Disparity**: Rural recall changes by -0.1452 vs Urban by +0.0496
+  - Bias widens the gap in who gets correctly identified
+- **Rural F1 Drop**: -0.0380 (from 0.2135 to 0.1754)
+  - Overall rural prediction quality degrades
+- **Threshold shift**: Biased model threshold 0.1233 vs baseline 0.1405
+
+> **Note**: AUC measures ranking across all thresholds and may remain stable even when
+> recall drops significantly. Recall at the operating threshold directly measures
+> missed diagnoses and is the key fairness metric for this use case.

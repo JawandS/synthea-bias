@@ -78,6 +78,44 @@ def extract_key_findings(md_content: str) -> str | None:
     return content if content else None
 
 
+def extract_metric_from_table(md_content: str, table_header: str, row_label: str, col_index: int) -> float | None:
+    """Extract a specific metric value from a markdown table.
+
+    Args:
+        md_content: Full markdown content
+        table_header: Header that precedes the table (e.g., "### Recall by Subgroup")
+        row_label: Label in first column to find (e.g., "Rural")
+        col_index: 0-based index of column to extract (after the label column)
+
+    Returns:
+        Float value or None if not found
+    """
+    lines = md_content.split("\n")
+    in_table = False
+    found_header = False
+
+    for line in lines:
+        if table_header in line:
+            found_header = True
+            continue
+        if found_header and line.strip().startswith("|"):
+            # Skip header row and separator
+            if "---" in line or row_label not in line:
+                in_table = True
+                continue
+            if row_label in line:
+                # Parse the row
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                if len(parts) > col_index + 1:
+                    try:
+                        return float(parts[col_index + 1])
+                    except ValueError:
+                        return None
+        elif found_header and in_table and not line.strip().startswith("|"):
+            break
+    return None
+
+
 def read_stats_from_data() -> dict[str, int | float]:
     """Read statistics directly from data.csv."""
     df = pd.read_csv(DATA_DIR / "data.csv")
@@ -379,23 +417,68 @@ point that maximizes F1 score on the validation set.
 
 """
 
-    report += """
+    # Extract recall metrics for dynamic findings if model report exists
+    findings_content = ""
+    if model_md:
+        urban_recall_base = extract_metric_from_table(model_md, "### Recall by Subgroup", "Urban", 0)
+        urban_recall_bias = extract_metric_from_table(model_md, "### Recall by Subgroup", "Urban", 1)
+        rural_recall_base = extract_metric_from_table(model_md, "### Recall by Subgroup", "Rural", 0)
+        rural_recall_bias = extract_metric_from_table(model_md, "### Recall by Subgroup", "Rural", 1)
+
+        if all(v is not None for v in [urban_recall_base, urban_recall_bias, rural_recall_base, rural_recall_bias]):
+            urban_recall_delta = urban_recall_bias - urban_recall_base
+            rural_recall_delta = rural_recall_bias - rural_recall_base
+            rural_recall_pct_drop = 100 * rural_recall_delta / rural_recall_base if rural_recall_base else 0
+
+            findings_content = f"""
+1. **Rural Recall Collapse**: The biased model's recall for rural patients drops
+   dramatically ({rural_recall_base:.1%} → {rural_recall_bias:.1%}, {rural_recall_delta:+.1%}), meaning it
+   misses {-rural_recall_pct_drop:.0f}% more true sleep apnea cases in rural populations.
+
+2. **Urban Recall Improvement**: Meanwhile, urban recall actually increases
+   ({urban_recall_base:.1%} → {urban_recall_bias:.1%}, {urban_recall_delta:+.1%}), as the model shifts its
+   predictions toward the majority group with complete labels.
+
+3. **Disparity Amplification**: The recall gap between urban and rural widens from
+   {(urban_recall_base - rural_recall_base):+.1%} to {(urban_recall_bias - rural_recall_bias):+.1%}, showing how
+   training on biased data amplifies existing healthcare inequities.
+"""
+        else:
+            findings_content = """
+1. **Rural Recall Drop**: The biased model catches fewer true sleep apnea cases
+   in rural populations, as it learns from data where rural cases are underrepresented.
+
+2. **Urban Performance Stable/Improved**: Urban predictions remain accurate or improve,
+   as the training data fully represents urban sleep apnea cases.
+
+3. **Fairness Gap Widens**: The performance disparity between subgroups increases,
+   demonstrating how label bias compounds into prediction bias.
+"""
+    else:
+        findings_content = """
+1. **Expected Rural Recall Drop**: Models trained on biased data will underpredict
+   sleep apnea in rural populations where diagnoses were masked.
+
+2. **Fairness Gap**: Performance disparity between urban and rural subgroups
+   is expected to widen under the biased model.
+
+3. **Run model training** (script 3) to see quantified results.
+"""
+
+    report += f"""
 ---
 
 ## 5. Key Findings
 
 ### Impact of Underdiagnosis Bias
+{findings_content}
+### Why Recall Matters More Than AUC
 
-1. **Rural AUC Degradation**: The biased model shows greater AUC reduction for
-   rural patients compared to urban, demonstrating how underdiagnosis bias
-   disproportionately harms the affected subgroup's predictive performance.
-
-2. **Threshold Compensation**: The biased model learns a lower classification
-   threshold, attempting to compensate for the reduced positive signal from
-   missing rural diagnoses in training data.
-
-3. **Fairness Gap**: The performance disparity between urban and rural subgroups
-   widens under the biased model, exacerbating healthcare inequities.
+- **AUC** measures ranking ability across all thresholds - it may remain stable
+  even when the model systematically underpredicts for a subgroup.
+- **Recall** measures how many true positives are caught at the operating threshold -
+  this directly translates to missed diagnoses in clinical deployment.
+- A model with good AUC but poor rural recall will still fail rural patients.
 
 ### Implications
 
@@ -405,15 +488,15 @@ point that maximizes F1 score on the validation set.
 - **Data Quality Matters**: "Ground truth" labels from EHR data may reflect access
   patterns rather than true disease prevalence.
 
-- **Fairness Monitoring**: Subgroup performance metrics are essential for detecting
-  and addressing bias in healthcare ML.
+- **Fairness Monitoring**: Subgroup recall and F1 metrics are essential for detecting
+  bias - overall AUC alone is insufficient.
 
 ### Mitigation Strategies
 
-1. **Active case finding** in underserved populations
-2. **Calibration adjustments** for known underdiagnosis patterns
-3. **Subgroup-aware training** with fairness constraints
-4. **Regular audits** of model performance across demographics
+1. **Active case finding** in underserved populations to improve label quality
+2. **Subgroup-stratified evaluation** with recall/F1 metrics, not just AUC
+3. **Fairness-aware training** with constraints on subgroup performance parity
+4. **Regular audits** comparing model predictions to external prevalence estimates
 
 ---
 

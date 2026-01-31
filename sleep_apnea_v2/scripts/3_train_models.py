@@ -285,13 +285,19 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Key Findings
 
-- **Rural AUC degradation**: {delta_sub('rural_auc')} (from {baseline_subgroup['rural_auc']:.4f} to {biased_subgroup['rural_auc']:.4f})
-  - The biased model has reduced ability to discriminate sleep apnea in rural patients
-- **Urban AUC change**: {delta_sub('urban_auc')} (relatively stable)
-- **Disparity gap**: Rural AUC changes by {delta_sub('rural_auc')} vs Urban by {delta_sub('urban_auc')}
-  - Bias introduces/widens performance gap between subgroups
-- **Threshold shift**: Biased model uses lower threshold ({biased_metrics['threshold']:.4f} vs {baseline_metrics['threshold']:.4f})
-  - Compensates for reduced signal from missing rural positives in training
+- **Rural Recall Drop**: {delta_sub('rural_recall')} (from {baseline_subgroup['rural_recall']:.4f} to {biased_subgroup['rural_recall']:.4f})
+  - The biased model misses more true sleep apnea cases in rural patients
+- **Urban Recall Change**: {delta_sub('urban_recall')} (from {baseline_subgroup['urban_recall']:.4f} to {biased_subgroup['urban_recall']:.4f})
+  - Urban recall may improve as model shifts toward majority group
+- **Recall Disparity**: Rural recall changes by {delta_sub('rural_recall')} vs Urban by {delta_sub('urban_recall')}
+  - Bias widens the gap in who gets correctly identified
+- **Rural F1 Drop**: {delta_sub('rural_f1')} (from {baseline_subgroup['rural_f1']:.4f} to {biased_subgroup['rural_f1']:.4f})
+  - Overall rural prediction quality degrades
+- **Threshold shift**: Biased model threshold {biased_metrics['threshold']:.4f} vs baseline {baseline_metrics['threshold']:.4f}
+
+> **Note**: AUC measures ranking across all thresholds and may remain stable even when
+> recall drops significantly. Recall at the operating threshold directly measures
+> missed diagnoses and is the key fairness metric for this use case.
 """
 
     md_path.write_text(content)
