@@ -5,7 +5,7 @@
 This script:
 1. Adds `has_sleep_apnea` boolean to patients based on conditions data
 2. Adds `mask_sleep_apnea` boolean for rural patients randomly selected as "underdiagnosed"
-3. Outputs bias_effect.md with before/after prevalence statistics
+3. Outputs 2_bias_effect.md with before/after prevalence statistics
 
 Usage:
     uv run python scripts/2_gen_bias.py [--mask-rate 0.3] [--seed 42]
@@ -159,7 +159,7 @@ def write_bias_effect_report(
     seed: int
 ) -> None:
     """Write bias effect report to markdown file."""
-    md_path = INFO_DIR / "bias_effect.md"
+    md_path = INFO_DIR / "2_bias_effect.md"
 
     # Masking summary
     n_rural_apnea = len(patients[(patients["URBAN"] == False) & (patients["has_sleep_apnea"] == True)])
@@ -308,7 +308,7 @@ def main():
     print(f"  After:  {after_stats['pct_apnea_urban']:.2f}%")
 
     print("\n" + "=" * 60)
-    print(f"Complete! See {INFO_DIR / 'bias_effect.md'}")
+    print(f"Complete! See {INFO_DIR / '2_bias_effect.md'}")
     print("=" * 60)
 
 

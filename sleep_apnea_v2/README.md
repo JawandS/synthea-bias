@@ -24,8 +24,8 @@ output/
 │   ├── conditions.csv    # All conditions (source for diagnoses)
 │   └── observations.csv  # BMI, smoking status
 └── info/
-    ├── summary_stats.md  # Population statistics
-    └── bias_effect.md    # Before/after bias analysis
+    ├── 1_summary_stats.md  # Population statistics
+    └── 2_bias_effect.md    # Before/after bias analysis
 ```
 
 ## Canonical Sleep Apnea Flags

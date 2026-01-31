@@ -7,7 +7,7 @@ This script:
 2. Copies relevant CSV files to output/data/
 3. Adds urban/rural flag to patients via SDoH county lookup
 4. Filters observations to only include relevant codes (BMI, smoking)
-5. Generates summary statistics in output/info/summary_stats.md
+5. Generates summary statistics in output/info/1_summary_stats.md
 
 Usage:
     uv run python scripts/1_generate_data.py [--population N] [--seed N] [--skip-synthea]
@@ -300,7 +300,7 @@ def compute_stats(patients: pd.DataFrame, conditions: pd.DataFrame, observations
 
 def write_summary_stats(stats: dict, population: int, seed: int) -> None:
     """Write summary statistics to markdown file."""
-    md_path = INFO_DIR / "summary_stats.md"
+    md_path = INFO_DIR / "1_summary_stats.md"
 
     # Build decade table rows
     decade_rows = "\n".join(
