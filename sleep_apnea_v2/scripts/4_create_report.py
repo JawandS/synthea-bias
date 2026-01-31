@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""
+4_create_report.py - Generate comprehensive case study report.
+
+This script compiles all analysis outputs into a single report.md file that
+documents the complete sleep apnea underdiagnosis bias case study.
+
+Usage:
+    uv run python scripts/4_create_report.py
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+
+# Paths
+SCRIPT_DIR = Path(__file__).parent.resolve()
+PROJECT_DIR = SCRIPT_DIR.parent
+OUTPUT_DIR = PROJECT_DIR / "output"
+DATA_DIR = OUTPUT_DIR / "data"
+INFO_DIR = OUTPUT_DIR / "info"
+
+# Input files
+SUMMARY_STATS_PATH = INFO_DIR / "1_summary_stats.md"
+BIAS_EFFECT_PATH = INFO_DIR / "2_bias_effect.md"
+MODEL_PATH = INFO_DIR / "3_model.md"
+
+# Output
+REPORT_PATH = OUTPUT_DIR / "report.md"
+
+
+def extract_table_from_md(md_content: str, table_header: str) -> str | None:
+    """Extract a markdown table that follows a given header."""
+    lines = md_content.split("\n")
+    in_table = False
+    table_lines = []
+
+    for i, line in enumerate(lines):
+        if table_header in line:
+            # Find the table (skip blank lines)
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip().startswith("|"):
+                    in_table = True
+                    table_lines.append(lines[j])
+                elif in_table and not lines[j].strip().startswith("|"):
+                    break
+            break
+
+    return "\n".join(table_lines) if table_lines else None
+
+
+def read_stats_from_data() -> dict:
+    """Read statistics directly from data files."""
+    patients = pd.read_csv(DATA_DIR / "patients.csv")
+
+    stats = {
+        "n_patients": len(patients),
+        "n_urban": len(patients[patients["URBAN"] == True]),
+        "n_rural": len(patients[patients["URBAN"] == False]),
+        "n_male": len(patients[patients["GENDER"] == "M"]),
+        "n_female": len(patients[patients["GENDER"] == "F"]),
+    }
+
+    stats["pct_urban"] = 100 * stats["n_urban"] / stats["n_patients"]
+    stats["pct_rural"] = 100 * stats["n_rural"] / stats["n_patients"]
+
+    if "has_sleep_apnea" in patients.columns:
+        stats["n_apnea"] = patients["has_sleep_apnea"].sum()
+        stats["pct_apnea"] = 100 * stats["n_apnea"] / stats["n_patients"]
+
+        # By location
+        urban = patients[patients["URBAN"] == True]
+        rural = patients[patients["URBAN"] == False]
+        stats["urban_apnea"] = urban["has_sleep_apnea"].sum()
+        stats["rural_apnea"] = rural["has_sleep_apnea"].sum()
+        stats["pct_urban_apnea"] = 100 * stats["urban_apnea"] / len(urban) if len(urban) else 0
+        stats["pct_rural_apnea"] = 100 * stats["rural_apnea"] / len(rural) if len(rural) else 0
+
+        if "mask_sleep_apnea" in patients.columns:
+            stats["n_masked"] = patients["mask_sleep_apnea"].sum()
+            rural_apnea = patients[(patients["URBAN"] == False) & (patients["has_sleep_apnea"] == True)]
+            stats["n_rural_apnea"] = len(rural_apnea)
+            stats["mask_rate"] = 100 * stats["n_masked"] / stats["n_rural_apnea"] if stats["n_rural_apnea"] else 0
+
+    return stats
+
+
+def read_md_file(path: Path) -> str | None:
+    """Read markdown file if it exists."""
+    if path.exists():
+        return path.read_text()
+    return None
+
+
+def generate_report() -> str:
+    """Generate the complete case study report."""
+    stats = read_stats_from_data()
+    summary_md = read_md_file(SUMMARY_STATS_PATH)
+    bias_md = read_md_file(BIAS_EFFECT_PATH)
+    model_md = read_md_file(MODEL_PATH)
+
+    report = f"""# Sleep Apnea Underdiagnosis Bias: A Case Study
+
+Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+---
+
+## 1. Overview
+
+### Study Goal
+
+This case study demonstrates how **barriers to care resulting in underdiagnosis** can
+introduce systematic bias into healthcare machine learning models. Specifically, we
+examine how rural populations face reduced access to diagnostic services for sleep
+apnea, leading to lower observed diagnosis rates despite similar true prevalence.
+
+When ML models are trained on this biased "observed" data, they learn to underpredict
+sleep apnea in rural populations, perpetuating and potentially amplifying existing
+healthcare disparities.
+
+### The Problem
+
+Sleep apnea affects approximately 9-38% of the general adult population, with higher
+rates among the elderly. Diagnosis requires specialized testing:
+
+- **Polysomnography**: Overnight sleep study at a specialized clinic
+- **Home sleep testing**: Ambulatory monitoring devices
+
+Rural populations face significant barriers to diagnosis:
+- Fewer sleep specialists and clinics
+- Longer travel distances to diagnostic facilities
+- Reduced access to follow-up care
+
+This creates a **label masking bias**: rural patients with sleep apnea are less likely
+to receive a formal diagnosis, making them appear "healthy" in electronic health records.
+
+### Study Design
+
+1. **Generate synthetic population** with realistic sleep apnea prevalence
+2. **Apply rural underdiagnosis bias** by masking a portion of rural diagnoses
+3. **Train ML models** on both true and biased labels
+4. **Compare performance** to quantify the bias impact
+
+---
+
+## 2. Data Generation
+
+### Synthea Patient Generator
+
+Data is generated using [Synthea](https://github.com/synthetichealth/synthea), an
+open-source synthetic patient population simulator. Synthea creates realistic (but
+not real) patient data including:
+
+- Demographics (age, gender, location)
+- Medical conditions with onset/resolution dates
+- Observations (BMI, smoking status)
+- Encounters and procedures
+
+### Sleep Apnea Module
+
+The sleep apnea disease progression is modeled using a Synthea Generic Module
+(`complex_sleep_apnea.json`). Key characteristics:
+
+**Risk Score Calculation**:
+The module calculates a cumulative risk score based on:
+- BMI >= 35 (severe obesity): +2 points
+- BMI >= 30 (obese): +1 point
+- Current smoker: +1 point
+- Alcohol use disorder: +1 point
+- Congestive heart failure: +2 points
+
+**Prevalence by Risk and Gender**:
+
+| Risk Score | Male Prevalence | Female Prevalence |
+|------------|-----------------|-------------------|
+| >= 4 | 60% | 40% |
+| >= 2 | 44% | 24% |
+| >= 1 | 32% | 16% |
+| 0 | 26% | 12% |
+
+This reflects epidemiological data showing higher sleep apnea rates in males and
+individuals with obesity, smoking history, and cardiovascular disease.
+
+**Diagnostic Pathway**:
+1. Initial encounter for symptoms (snoring, daytime sleepiness)
+2. Referral to sleep specialist
+3. Sleep study (polysomnography or home testing)
+4. Diagnosis and treatment (CPAP or oral appliance)
+
+### Generated Population
+
+"""
+
+    # Add population stats
+    report += f"""| Metric | Value |
+|--------|-------|
+| Total patients | {stats['n_patients']:,} |
+| Urban | {stats['n_urban']:,} ({stats['pct_urban']:.1f}%) |
+| Rural | {stats['n_rural']:,} ({stats['pct_rural']:.1f}%) |
+| Male | {stats['n_male']:,} |
+| Female | {stats['n_female']:,} |
+"""
+
+    if "n_apnea" in stats:
+        report += f"""| Sleep apnea cases | {stats['n_apnea']:,} ({stats['pct_apnea']:.1f}%) |
+"""
+
+    report += """
+---
+
+## 3. Bias Application
+
+### Rural Underdiagnosis Simulation
+
+To simulate real-world underdiagnosis bias, we apply **label masking** to rural
+patients with sleep apnea. This models the scenario where patients have the condition
+but never receive a formal diagnosis due to barriers to care.
+
+**Masking Process**:
+1. Identify all rural patients with true sleep apnea diagnosis
+2. Randomly select a portion (mask rate) to have their diagnosis "hidden"
+3. Create two label sets:
+   - `has_sleep_apnea`: True underlying condition
+   - `observed_sleep_apnea`: What appears in medical records (true & ~masked)
+
+"""
+
+    if "n_masked" in stats:
+        report += f"""### Masking Statistics
+
+| Metric | Value |
+|--------|-------|
+| Rural patients with sleep apnea | {stats['n_rural_apnea']:,} |
+| Patients masked (underdiagnosed) | {stats['n_masked']:,} |
+| Effective mask rate | {stats['mask_rate']:.1f}% |
+
+"""
+
+    # Include bias effect details if available
+    if bias_md:
+        # Extract key tables from bias report
+        report += """### Prevalence Impact
+
+The masking creates a gap between true and observed prevalence, particularly
+affecting rural populations:
+
+"""
+        # Try to extract the prevalence by location table
+        location_table = extract_table_from_md(bias_md, "## Prevalence by Location")
+        if location_table:
+            report += location_table + "\n\n"
+
+        gender_loc_table = extract_table_from_md(bias_md, "## Prevalence by Gender and Location")
+        if gender_loc_table:
+            report += "**By Gender and Location**:\n\n" + gender_loc_table + "\n\n"
+
+    report += """
+---
+
+## 4. Model Training and Evaluation
+
+### Approach
+
+We train two Gradient Boosted Decision Tree (GBDT) models:
+
+1. **Baseline Model**: Trained on true labels (`has_sleep_apnea`)
+   - Represents the ideal scenario with complete diagnosis information
+
+2. **Biased Model**: Trained on observed labels (`observed_sleep_apnea`)
+   - Represents real-world scenario with underdiagnosis bias
+
+Both models are evaluated against **true labels** to measure actual predictive
+performance and fairness across subgroups.
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| age | Patient age in years |
+| male | Gender indicator (1 = male) |
+| urban | Location indicator (1 = urban) |
+| income | Household income (scaled) |
+| bmi | Body mass index |
+| smoker | Current smoker indicator |
+| hypertension | Hypertension diagnosis |
+| chf | Congestive heart failure diagnosis |
+| alcohol_use | Alcohol use disorder diagnosis |
+
+### Model Specification
+
+| Parameter | Value |
+|-----------|-------|
+| Algorithm | Gradient Boosted Decision Tree |
+| n_estimators | 100 |
+| max_depth | 4 |
+| learning_rate | 0.1 |
+| min_samples_split | 20 |
+| min_samples_leaf | 10 |
+
+"""
+
+    # Include model results if available
+    if model_md:
+        # Extract performance tables
+        overall_table = extract_table_from_md(model_md, "## Overall Performance")
+        if overall_table:
+            report += "### Overall Performance\n\n" + overall_table + "\n\n"
+
+        auc_table = extract_table_from_md(model_md, "### AUC-ROC by Subgroup")
+        if auc_table:
+            report += "### Subgroup AUC-ROC\n\n" + auc_table + "\n\n"
+
+        recall_table = extract_table_from_md(model_md, "### Recall by Subgroup")
+        if recall_table:
+            report += "### Subgroup Recall\n\n" + recall_table + "\n\n"
+
+    report += """
+---
+
+## 5. Key Findings
+
+### Impact of Underdiagnosis Bias
+
+1. **Overall Performance Degradation**: The biased model shows reduced AUC-ROC and
+   recall compared to the baseline, as it learns incorrect associations from
+   mislabeled rural cases.
+
+2. **Disproportionate Rural Impact**: Rural recall drops significantly because the
+   model learns that rural patients are less likely to have sleep apnea (based on
+   biased training data), when in reality they have similar true prevalence.
+
+3. **Fairness Gap**: The performance disparity between urban and rural subgroups
+   widens under the biased model, exacerbating healthcare inequities.
+
+### Implications
+
+- **Model Deployment Risk**: Deploying models trained on biased data perpetuates
+  underdiagnosis in already underserved populations.
+
+- **Data Quality Matters**: "Ground truth" labels from EHR data may reflect access
+  patterns rather than true disease prevalence.
+
+- **Fairness Monitoring**: Subgroup performance metrics are essential for detecting
+  and addressing bias in healthcare ML.
+
+### Mitigation Strategies
+
+1. **Active case finding** in underserved populations
+2. **Calibration adjustments** for known underdiagnosis patterns
+3. **Subgroup-aware training** with fairness constraints
+4. **Regular audits** of model performance across demographics
+
+---
+
+## 6. Conclusion
+
+This case study demonstrates how structural barriers to healthcare access create
+biased training data that, when used for ML model development, can perpetuate and
+amplify existing health disparities. Rural underdiagnosis of sleep apnea is just
+one example; similar patterns exist across many conditions and populations.
+
+Responsible ML development in healthcare requires:
+- Understanding the data generation process and its biases
+- Evaluating models on true outcomes when possible
+- Monitoring fairness across relevant subgroups
+- Implementing mitigation strategies for known biases
+
+---
+
+## Appendix: Pipeline Execution
+
+```bash
+# 1. Generate synthetic population (Vermont, ages 60-100)
+uv run python scripts/1_generate_data.py -p 11000 -s 42
+
+# 2. Apply rural underdiagnosis bias (30% mask rate)
+uv run python scripts/2_gen_bias.py --mask-rate 0.3
+
+# 3. Train and evaluate models
+uv run python scripts/3_train_models.py
+
+# 4. Generate this report
+uv run python scripts/4_create_report.py
+```
+
+---
+
+*This report was generated as part of the Synthea Bias Case Study project.*
+"""
+
+    return report
+
+
+def main():
+    print("=" * 60)
+    print("Sleep Apnea v2: Generate Report")
+    print("=" * 60)
+
+    # Check for required data
+    if not (DATA_DIR / "patients.csv").exists():
+        print("Error: patients.csv not found. Run 1_generate_data.py first.")
+        return
+
+    print("\nReading data and generating report...")
+    report = generate_report()
+
+    # Write report
+    REPORT_PATH.write_text(report)
+    print(f"\nWrote {REPORT_PATH}")
+
+    # Report status of input files
+    print("\nInput files status:")
+    for name, path in [
+        ("Summary stats", SUMMARY_STATS_PATH),
+        ("Bias effect", BIAS_EFFECT_PATH),
+        ("Model results", MODEL_PATH),
+    ]:
+        status = "found" if path.exists() else "not found (section will be minimal)"
+        print(f"  {name}: {status}")
+
+    print("\n" + "=" * 60)
+    print(f"Complete! Report saved to {REPORT_PATH}")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
