@@ -77,7 +77,7 @@ def run_synthea(population: int, seed: int) -> None:
         "--exporter.practitioner.fhir.export=false",
         "--exporter.years_of_history=0",
         f"--exporter.baseDirectory={SYNTHEA_OUTPUT_DIR.name}",
-        "Mississippi",
+        "Vermont",
     ]
 
     print(f"Command: {' '.join(cmd)}")
@@ -332,7 +332,7 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 | Population generated | {stats['n_patients']:,} |
 | Seed | {seed} |
 | Age Range | 60-100 |
-| State | Montana |
+| State | Vermont |
 
 ## Population Summary
 
