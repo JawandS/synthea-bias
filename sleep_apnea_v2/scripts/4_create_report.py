@@ -430,7 +430,7 @@ Responsible ML development in healthcare requires:
 
 ```bash
 # 1. Generate synthetic population (Vermont, ages 60-100)
-uv run python scripts/1_generate_data.py -p 11000 -s 42
+uv run python scripts/1_generate_data.py -p <N> -s 42
 
 # 2. Apply rural underdiagnosis bias (30% mask rate)
 uv run python scripts/2_gen_bias.py --mask-rate 0.3
@@ -441,6 +441,8 @@ uv run python scripts/3_train_models.py
 # 4. Generate this report
 uv run python scripts/4_create_report.py
 ```
+
+**This run**: """ + f"{stats['n_patients']:,}" + """ patients generated
 
 ---
 
