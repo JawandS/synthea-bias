@@ -77,7 +77,7 @@ def run_synthea(population: int, seed: int) -> None:
         "--exporter.practitioner.fhir.export=false",
         "--exporter.years_of_history=0",
         f"--exporter.baseDirectory={SYNTHEA_OUTPUT_DIR.name}",
-        "Montana",
+        "Mississippi",
     ]
 
     print(f"Command: {' '.join(cmd)}")
