@@ -29,8 +29,46 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    precision_recall_curve,
 )
 from sklearn.model_selection import train_test_split
+
+
+def find_optimal_threshold(y_true: np.ndarray, y_proba: np.ndarray, method: str = "f1") -> float:
+    """Find optimal classification threshold.
+
+    Args:
+        y_true: True binary labels
+        y_proba: Predicted probabilities for positive class
+        method: 'f1' to maximize F1 score, 'youden' for Youden's J statistic
+
+    Returns:
+        Optimal threshold value
+    """
+    if method == "f1":
+        # Find threshold that maximizes F1 score
+        precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+        # Avoid division by zero - compute denominator first
+        denom = precision + recall
+        f1_scores = np.zeros_like(precision)
+        nonzero = denom > 0
+        f1_scores[nonzero] = 2 * (precision[nonzero] * recall[nonzero]) / denom[nonzero]
+        # precision_recall_curve returns n+1 values, thresholds has n values
+        best_idx = np.argmax(f1_scores[:-1])
+        return thresholds[best_idx]
+    elif method == "youden":
+        # Youden's J = sensitivity + specificity - 1 = TPR - FPR
+        from sklearn.metrics import roc_curve
+        fpr, tpr, thresholds = roc_curve(y_true, y_proba)
+        j_scores = tpr - fpr
+        best_idx = np.argmax(j_scores)
+        return thresholds[best_idx]
+    elif method == "prevalence":
+        # Set threshold to match expected prevalence
+        prevalence = y_true.mean()
+        return np.percentile(y_proba, 100 * (1 - prevalence))
+    else:
+        return 0.5
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -128,21 +166,40 @@ def train_and_evaluate(
     X_test: np.ndarray,
     y_test_true: np.ndarray,
     model_params: dict,
-) -> tuple[GradientBoostingClassifier, dict]:
-    """Train GBDT and evaluate on test set."""
+    threshold_method: str = "f1",
+) -> tuple[GradientBoostingClassifier, dict, float]:
+    """Train GBDT and evaluate on test set with adaptive threshold.
+
+    Args:
+        X_train, y_train: Training data
+        X_val, y_val: Validation data (used for threshold tuning)
+        X_test, y_test_true: Test data with true labels
+        model_params: GBDT hyperparameters
+        threshold_method: Method for finding optimal threshold ('f1', 'youden', 'prevalence')
+
+    Returns:
+        Trained model, metrics dict, optimal threshold
+    """
     model = GradientBoostingClassifier(**model_params)
     model.fit(X_train, y_train)
 
-    # Validation performance (for tuning)
+    # Validation performance and threshold tuning
     val_proba = model.predict_proba(X_val)[:, 1]
     val_auc = roc_auc_score(y_val, val_proba) if len(np.unique(y_val)) > 1 else 0
 
-    # Test performance (evaluated on TRUE labels)
+    # Find optimal threshold on validation set
+    if len(np.unique(y_val)) > 1:
+        threshold = find_optimal_threshold(y_val, val_proba, method=threshold_method)
+    else:
+        threshold = 0.5
+
+    # Test performance (evaluated on TRUE labels) with adaptive threshold
     test_proba = model.predict_proba(X_test)[:, 1]
-    test_pred = model.predict(X_test)
+    test_pred = (test_proba >= threshold).astype(int)
 
     metrics = {
         "val_auc": val_auc,
+        "threshold": threshold,
         "test_auc": roc_auc_score(y_test_true, test_proba) if len(np.unique(y_test_true)) > 1 else 0,
         "test_ap": average_precision_score(y_test_true, test_proba) if len(np.unique(y_test_true)) > 1 else 0,
         "test_accuracy": accuracy_score(y_test_true, test_pred),
@@ -151,7 +208,7 @@ def train_and_evaluate(
         "test_f1": f1_score(y_test_true, test_pred, zero_division=0),
     }
 
-    return model, metrics
+    return model, metrics, threshold
 
 
 def compute_subgroup_metrics(
@@ -159,10 +216,11 @@ def compute_subgroup_metrics(
     X_test: pd.DataFrame,
     y_test_true: np.ndarray,
     feature_names: list[str],
+    threshold: float = 0.5,
 ) -> dict:
-    """Compute metrics for urban/rural subgroups."""
+    """Compute metrics for urban/rural subgroups with specified threshold."""
     test_proba = model.predict_proba(X_test)[:, 1]
-    test_pred = model.predict(X_test)
+    test_pred = (test_proba >= threshold).astype(int)
 
     # Get urban column index
     urban_idx = feature_names.index("urban")
@@ -175,10 +233,16 @@ def compute_subgroup_metrics(
             subgroup_metrics[f"{name}_auc"] = roc_auc_score(y_test_true[mask], test_proba[mask])
             subgroup_metrics[f"{name}_recall"] = recall_score(y_test_true[mask], test_pred[mask], zero_division=0)
             subgroup_metrics[f"{name}_precision"] = precision_score(y_test_true[mask], test_pred[mask], zero_division=0)
+            subgroup_metrics[f"{name}_f1"] = f1_score(y_test_true[mask], test_pred[mask], zero_division=0)
+            subgroup_metrics[f"{name}_n"] = mask.sum()
+            subgroup_metrics[f"{name}_pos"] = y_test_true[mask].sum()
         else:
             subgroup_metrics[f"{name}_auc"] = 0
             subgroup_metrics[f"{name}_recall"] = 0
             subgroup_metrics[f"{name}_precision"] = 0
+            subgroup_metrics[f"{name}_f1"] = 0
+            subgroup_metrics[f"{name}_n"] = mask.sum()
+            subgroup_metrics[f"{name}_pos"] = 0
 
     return subgroup_metrics
 
@@ -191,6 +255,7 @@ def write_model_report(
     model_params: dict,
     feature_names: list[str],
     data_stats: dict,
+    threshold_method: str,
 ) -> None:
     """Write model comparison report to markdown file."""
     md_path = INFO_DIR / "3_model.md"
@@ -218,6 +283,18 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 | learning_rate | {model_params['learning_rate']} |
 | min_samples_split | {model_params['min_samples_split']} |
 | min_samples_leaf | {model_params['min_samples_leaf']} |
+| subsample | {model_params['subsample']} |
+
+## Threshold Selection
+
+| Parameter | Value |
+|-----------|-------|
+| Method | {threshold_method} (maximize F1 on validation set) |
+| Baseline threshold | {baseline_metrics['threshold']:.4f} |
+| Biased threshold | {biased_metrics['threshold']:.4f} |
+
+> **Note**: With ~9% class prevalence, the default 0.5 threshold would rarely predict positives.
+> Adaptive thresholding finds the optimal operating point that balances precision and recall.
 
 ## Features
 
@@ -254,12 +331,19 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 |--------|----------|--------|-------|
 | AUC-ROC | {baseline_metrics['test_auc']:.4f} | {biased_metrics['test_auc']:.4f} | {delta('test_auc')} |
 | Avg Precision | {baseline_metrics['test_ap']:.4f} | {biased_metrics['test_ap']:.4f} | {delta('test_ap')} |
-| Accuracy | {baseline_metrics['test_accuracy']:.4f} | {biased_metrics['test_accuracy']:.4f} | {delta('test_accuracy')} |
+| F1 Score | {baseline_metrics['test_f1']:.4f} | {biased_metrics['test_f1']:.4f} | {delta('test_f1')} |
 | Precision | {baseline_metrics['test_precision']:.4f} | {biased_metrics['test_precision']:.4f} | {delta('test_precision')} |
 | Recall | {baseline_metrics['test_recall']:.4f} | {biased_metrics['test_recall']:.4f} | {delta('test_recall')} |
-| F1 Score | {baseline_metrics['test_f1']:.4f} | {biased_metrics['test_f1']:.4f} | {delta('test_f1')} |
+| Accuracy | {baseline_metrics['test_accuracy']:.4f} | {biased_metrics['test_accuracy']:.4f} | {delta('test_accuracy')} |
 
 ## Subgroup Performance (Urban vs Rural)
+
+### Test Set Composition
+
+| Subgroup | Patients | Apnea Cases | Prevalence |
+|----------|----------|-------------|------------|
+| Urban | {baseline_subgroup['urban_n']:,} | {baseline_subgroup['urban_pos']:,} | {100*baseline_subgroup['urban_pos']/baseline_subgroup['urban_n']:.2f}% |
+| Rural | {baseline_subgroup['rural_n']:,} | {baseline_subgroup['rural_pos']:,} | {100*baseline_subgroup['rural_pos']/baseline_subgroup['rural_n']:.2f}% |
 
 ### AUC-ROC by Subgroup
 
@@ -282,11 +366,22 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 | Urban | {baseline_subgroup['urban_precision']:.4f} | {biased_subgroup['urban_precision']:.4f} | {delta_sub('urban_precision')} |
 | Rural | {baseline_subgroup['rural_precision']:.4f} | {biased_subgroup['rural_precision']:.4f} | {delta_sub('rural_precision')} |
 
+### F1 Score by Subgroup
+
+| Subgroup | Baseline | Biased | Delta |
+|----------|----------|--------|-------|
+| Urban | {baseline_subgroup['urban_f1']:.4f} | {biased_subgroup['urban_f1']:.4f} | {delta_sub('urban_f1')} |
+| Rural | {baseline_subgroup['rural_f1']:.4f} | {biased_subgroup['rural_f1']:.4f} | {delta_sub('rural_f1')} |
+
 ## Key Findings
 
-- **Overall AUC degradation**: {delta('test_auc')} (from {baseline_metrics['test_auc']:.4f} to {biased_metrics['test_auc']:.4f})
-- **Rural recall degradation**: {delta_sub('rural_recall')} (most affected by underdiagnosis bias)
-- **Urban performance**: Relatively stable as bias only affects rural population
+- **Rural AUC degradation**: {delta_sub('rural_auc')} (from {baseline_subgroup['rural_auc']:.4f} to {biased_subgroup['rural_auc']:.4f})
+  - The biased model has reduced ability to discriminate sleep apnea in rural patients
+- **Urban AUC change**: {delta_sub('urban_auc')} (relatively stable)
+- **Disparity gap**: Rural AUC changes by {delta_sub('rural_auc')} vs Urban by {delta_sub('urban_auc')}
+  - Bias introduces/widens performance gap between subgroups
+- **Threshold shift**: Biased model uses lower threshold ({biased_metrics['threshold']:.4f} vs {baseline_metrics['threshold']:.4f})
+  - Compensates for reduced signal from missing rural positives in training
 """
 
     md_path.write_text(content)
@@ -351,36 +446,48 @@ def main():
     print(f"  Val: {len(X_val):,} ({np.mean(y_true_val):.2%} positive)")
     print(f"  Test: {len(X_test):,} ({np.mean(y_true_test):.2%} positive)")
 
-    # Model parameters
+    # Model parameters - improved for imbalanced classification
     model_params = {
-        "n_estimators": 100,
-        "max_depth": 4,
-        "learning_rate": 0.1,
+        "n_estimators": 200,
+        "max_depth": 5,
+        "learning_rate": 0.05,
         "min_samples_split": 20,
         "min_samples_leaf": 10,
+        "subsample": 0.8,  # Stochastic gradient boosting for regularization
         "random_state": args.seed,
     }
 
+    # Threshold selection method
+    threshold_method = "f1"  # Maximize F1 score on validation set
+
     # Train baseline model (on true labels)
     print("\nTraining baseline model (true labels)...")
-    baseline_model, baseline_metrics = train_and_evaluate(
-        X_train, y_true_train, X_val, y_true_val, X_test, y_true_test, model_params
+    baseline_model, baseline_metrics, baseline_threshold = train_and_evaluate(
+        X_train, y_true_train, X_val, y_true_val, X_test, y_true_test, model_params, threshold_method
     )
     print(f"  Val AUC: {baseline_metrics['val_auc']:.4f}")
     print(f"  Test AUC: {baseline_metrics['test_auc']:.4f}")
+    print(f"  Optimal threshold: {baseline_threshold:.4f}")
+    print(f"  Test F1: {baseline_metrics['test_f1']:.4f}")
 
     # Train biased model (on observed/masked labels)
     print("\nTraining biased model (observed labels)...")
-    biased_model, biased_metrics = train_and_evaluate(
-        X_train, y_obs_train, X_val, y_obs_val, X_test, y_true_test, model_params
+    biased_model, biased_metrics, biased_threshold = train_and_evaluate(
+        X_train, y_obs_train, X_val, y_obs_val, X_test, y_true_test, model_params, threshold_method
     )
     print(f"  Val AUC: {biased_metrics['val_auc']:.4f}")
     print(f"  Test AUC: {biased_metrics['test_auc']:.4f}")
+    print(f"  Optimal threshold: {biased_threshold:.4f}")
+    print(f"  Test F1: {biased_metrics['test_f1']:.4f}")
 
-    # Compute subgroup metrics
+    # Compute subgroup metrics with respective thresholds
     print("\nComputing subgroup metrics...")
-    baseline_subgroup = compute_subgroup_metrics(baseline_model, X_test, y_true_test, feature_cols)
-    biased_subgroup = compute_subgroup_metrics(biased_model, X_test, y_true_test, feature_cols)
+    baseline_subgroup = compute_subgroup_metrics(
+        baseline_model, X_test, y_true_test, feature_cols, baseline_threshold
+    )
+    biased_subgroup = compute_subgroup_metrics(
+        biased_model, X_test, y_true_test, feature_cols, biased_threshold
+    )
 
     # Write report
     write_model_report(
@@ -391,21 +498,32 @@ def main():
         model_params,
         feature_cols,
         data_stats,
+        threshold_method,
     )
 
     # Console summary
     print("\n" + "=" * 60)
     print("Results Summary")
     print("=" * 60)
-    print(f"\nOverall AUC:")
-    print(f"  Baseline: {baseline_metrics['test_auc']:.4f}")
-    print(f"  Biased:   {biased_metrics['test_auc']:.4f}")
-    print(f"  Delta:    {biased_metrics['test_auc'] - baseline_metrics['test_auc']:+.4f}")
 
-    print(f"\nRural Recall:")
+    print(f"\nThresholds (F1-optimized):")
+    print(f"  Baseline: {baseline_threshold:.4f}")
+    print(f"  Biased:   {biased_threshold:.4f}")
+
+    print(f"\nOverall F1:")
+    print(f"  Baseline: {baseline_metrics['test_f1']:.4f}")
+    print(f"  Biased:   {biased_metrics['test_f1']:.4f}")
+    print(f"  Delta:    {biased_metrics['test_f1'] - baseline_metrics['test_f1']:+.4f}")
+
+    print(f"\nRural Recall (sensitivity to true positives):")
     print(f"  Baseline: {baseline_subgroup['rural_recall']:.4f}")
     print(f"  Biased:   {biased_subgroup['rural_recall']:.4f}")
     print(f"  Delta:    {biased_subgroup['rural_recall'] - baseline_subgroup['rural_recall']:+.4f}")
+
+    print(f"\nRural F1:")
+    print(f"  Baseline: {baseline_subgroup['rural_f1']:.4f}")
+    print(f"  Biased:   {biased_subgroup['rural_f1']:.4f}")
+    print(f"  Delta:    {biased_subgroup['rural_f1'] - baseline_subgroup['rural_f1']:+.4f}")
 
     print("\n" + "=" * 60)
     print(f"Complete! See {INFO_DIR / '3_model.md'}")

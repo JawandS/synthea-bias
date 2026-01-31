@@ -52,6 +52,26 @@ def extract_table_from_md(md_content: str, table_header: str) -> str | None:
     return "\n".join(table_lines) if table_lines else None
 
 
+def extract_key_findings(md_content: str) -> str | None:
+    """Extract key findings section from model report."""
+    lines = md_content.split("\n")
+    findings_lines = []
+    in_findings = False
+
+    for line in lines:
+        if "## Key Findings" in line:
+            in_findings = True
+            continue
+        if in_findings:
+            # Stop at next section or end
+            if line.startswith("## ") or line.startswith("---"):
+                break
+            findings_lines.append(line)
+
+    content = "\n".join(findings_lines).strip()
+    return content if content else None
+
+
 def read_stats_from_data() -> dict[str, int | float]:
     """Read statistics directly from data files."""
     patients = pd.read_csv(DATA_DIR / "patients.csv")
@@ -289,25 +309,35 @@ performance and fairness across subgroups.
 | chf | Congestive heart failure diagnosis |
 | alcohol_use | Alcohol use disorder diagnosis |
 
-### Model Specification
-
-| Parameter | Value |
-|-----------|-------|
-| Algorithm | Gradient Boosted Decision Tree |
-| n_estimators | 100 |
-| max_depth | 4 |
-| learning_rate | 0.1 |
-| min_samples_split | 20 |
-| min_samples_leaf | 10 |
-
 """
 
     # Include model results if available
     if model_md:
+        # Extract model specification from 3_model.md
+        spec_table = extract_table_from_md(model_md, "## Model Specification")
+        if spec_table:
+            report += "### Model Specification\n\n" + spec_table + "\n\n"
+
+        # Extract threshold selection info
+        threshold_table = extract_table_from_md(model_md, "## Threshold Selection")
+        if threshold_table:
+            report += """### Threshold Selection
+
+With ~9% class prevalence, the default 0.5 classification threshold would rarely
+predict positives. We use **adaptive thresholding** to find the optimal operating
+point that maximizes F1 score on the validation set.
+
+""" + threshold_table + "\n\n"
+
         # Extract performance tables
         overall_table = extract_table_from_md(model_md, "## Overall Performance")
         if overall_table:
             report += "### Overall Performance\n\n" + overall_table + "\n\n"
+
+        # Extract test set composition
+        composition_table = extract_table_from_md(model_md, "### Test Set Composition")
+        if composition_table:
+            report += "### Test Set Composition\n\n" + composition_table + "\n\n"
 
         auc_table = extract_table_from_md(model_md, "### AUC-ROC by Subgroup")
         if auc_table:
@@ -317,6 +347,32 @@ performance and fairness across subgroups.
         if recall_table:
             report += "### Subgroup Recall\n\n" + recall_table + "\n\n"
 
+        f1_table = extract_table_from_md(model_md, "### F1 Score by Subgroup")
+        if f1_table:
+            report += "### Subgroup F1 Score\n\n" + f1_table + "\n\n"
+
+        # Extract key findings from model report
+        key_findings = extract_key_findings(model_md)
+        if key_findings:
+            report += "### Key Model Findings\n\n" + key_findings + "\n\n"
+    else:
+        # Fallback if no model report
+        report += """### Model Specification
+
+| Parameter | Value |
+|-----------|-------|
+| Algorithm | Gradient Boosted Decision Tree |
+| n_estimators | 200 |
+| max_depth | 5 |
+| learning_rate | 0.05 |
+| min_samples_split | 20 |
+| min_samples_leaf | 10 |
+| subsample | 0.8 |
+
+*Note: Run 3_train_models.py to generate detailed model results.*
+
+"""
+
     report += """
 ---
 
@@ -324,13 +380,13 @@ performance and fairness across subgroups.
 
 ### Impact of Underdiagnosis Bias
 
-1. **Overall Performance Degradation**: The biased model shows reduced AUC-ROC and
-   recall compared to the baseline, as it learns incorrect associations from
-   mislabeled rural cases.
+1. **Rural AUC Degradation**: The biased model shows greater AUC reduction for
+   rural patients compared to urban, demonstrating how underdiagnosis bias
+   disproportionately harms the affected subgroup's predictive performance.
 
-2. **Disproportionate Rural Impact**: Rural recall drops significantly because the
-   model learns that rural patients are less likely to have sleep apnea (based on
-   biased training data), when in reality they have similar true prevalence.
+2. **Threshold Compensation**: The biased model learns a lower classification
+   threshold, attempting to compensate for the reduced positive signal from
+   missing rural diagnoses in training data.
 
 3. **Fairness Gap**: The performance disparity between urban and rural subgroups
    widens under the biased model, exacerbating healthcare inequities.
