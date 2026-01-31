@@ -3,9 +3,9 @@
 3_train_models.py - Train and evaluate GBDT models on baseline vs biased data.
 
 This script:
-1. Builds feature matrix from patients, conditions, and observations
+1. Loads feature matrix from data.csv (created by 2_gen_bias.py)
 2. Trains baseline model on true labels (has_sleep_apnea)
-3. Trains biased model on observed labels (has_sleep_apnea & ~mask_sleep_apnea)
+3. Trains biased model on observed labels (observed_sleep_apnea)
 4. Evaluates both models on true labels to measure bias impact
 5. Outputs 3_model.md with specifications and performance comparison
 
@@ -46,29 +46,25 @@ def find_optimal_threshold(y_true: np.ndarray, y_proba: np.ndarray, method: str 
         Optimal threshold value
     """
     if method == "f1":
-        # Find threshold that maximizes F1 score
         precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
-        # Avoid division by zero - compute denominator first
         denom = precision + recall
         f1_scores = np.zeros_like(precision)
         nonzero = denom > 0
         f1_scores[nonzero] = 2 * (precision[nonzero] * recall[nonzero]) / denom[nonzero]
-        # precision_recall_curve returns n+1 values, thresholds has n values
         best_idx = np.argmax(f1_scores[:-1])
         return thresholds[best_idx]
     elif method == "youden":
-        # Youden's J = sensitivity + specificity - 1 = TPR - FPR
         from sklearn.metrics import roc_curve
         fpr, tpr, thresholds = roc_curve(y_true, y_proba)
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
         return thresholds[best_idx]
     elif method == "prevalence":
-        # Set threshold to match expected prevalence
         prevalence = y_true.mean()
         return np.percentile(y_proba, 100 * (1 - prevalence))
     else:
         return 0.5
+
 
 # Paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -77,85 +73,13 @@ OUTPUT_DIR = PROJECT_DIR / "output"
 DATA_DIR = OUTPUT_DIR / "data"
 INFO_DIR = OUTPUT_DIR / "info"
 
-# Condition codes
-HYPERTENSION_CODE = "59621000"
-CHF_CODE = "88805009"
-ALCOHOL_USE_CODE = "7200002"
-
-# Observation codes
-BMI_CODE = "39156-5"
-SMOKING_CODE = "72166-2"
+# Feature columns (must match 2_gen_bias.py output)
+FEATURE_COLS = ["age", "male", "urban", "income", "bmi", "smoker", "hypertension", "chf", "alcohol_use"]
 
 
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load patients, conditions, and observations data."""
-    patients = pd.read_csv(DATA_DIR / "patients.csv")
-    conditions = pd.read_csv(DATA_DIR / "conditions.csv")
-    observations = pd.read_csv(DATA_DIR / "observations.csv")
-    return patients, conditions, observations
-
-
-def build_features(
-    patients: pd.DataFrame,
-    conditions: pd.DataFrame,
-    observations: pd.DataFrame,
-) -> pd.DataFrame:
-    """Build feature matrix for modeling."""
-    df = patients[["Id"]].copy()
-
-    # Age from birthdate
-    patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"])
-    reference_date = patients["BIRTHDATE"].max() + pd.DateOffset(years=70)
-    df["age"] = ((reference_date - patients["BIRTHDATE"]).dt.days / 365.25).astype(int)
-
-    # Gender (1 = male)
-    df["male"] = (patients["GENDER"] == "M").astype(int)
-
-    # Urban flag
-    df["urban"] = patients["URBAN"].astype(int)
-
-    # Income (normalized)
-    df["income"] = patients["INCOME"] / 100000  # Scale to ~0-2 range
-
-    # Conditions - check if patient has each condition
-    codes = conditions["CODE"].astype(str)
-    for code, name in [
-        (HYPERTENSION_CODE, "hypertension"),
-        (CHF_CODE, "chf"),
-        (ALCOHOL_USE_CODE, "alcohol_use"),
-    ]:
-        patient_ids = set(conditions[codes == code]["PATIENT"].unique())
-        df[name] = patients["Id"].isin(patient_ids).astype(int)
-
-    # BMI - get latest value per patient
-    bmi_obs = observations[observations["CODE"].astype(str) == BMI_CODE].copy()
-    if len(bmi_obs) > 0:
-        bmi_obs["DATE"] = pd.to_datetime(bmi_obs["DATE"])
-        bmi_latest = bmi_obs.sort_values("DATE").groupby("PATIENT").last()["VALUE"]
-        df["bmi"] = patients["Id"].map(bmi_latest).fillna(df["age"] * 0 + 25)  # Default BMI
-        df["bmi"] = pd.to_numeric(df["bmi"], errors="coerce").fillna(25)
-    else:
-        df["bmi"] = 25.0
-
-    # Smoking status - get latest value per patient
-    smoking_obs = observations[observations["CODE"].astype(str) == SMOKING_CODE].copy()
-    if len(smoking_obs) > 0:
-        # Map smoking status to binary (current smoker = 1)
-        smoking_obs["DATE"] = pd.to_datetime(smoking_obs["DATE"])
-        smoking_latest = smoking_obs.sort_values("DATE").groupby("PATIENT").last()["VALUE"]
-        smoking_map = smoking_latest.str.lower().str.contains("current|daily|occasional", na=False)
-        df["smoker"] = patients["Id"].map(smoking_map).fillna(False).astype(int)
-    else:
-        df["smoker"] = 0
-
-    # Target variables
-    df["has_sleep_apnea"] = patients["has_sleep_apnea"].astype(int)
-    df["mask_sleep_apnea"] = patients["mask_sleep_apnea"].astype(int)
-    df["observed_sleep_apnea"] = (
-        patients["has_sleep_apnea"] & ~patients["mask_sleep_apnea"]
-    ).astype(int)
-
-    return df
+def load_data() -> pd.DataFrame:
+    """Load consolidated data.csv."""
+    return pd.read_csv(DATA_DIR / "data.csv")
 
 
 def train_and_evaluate(
@@ -168,18 +92,7 @@ def train_and_evaluate(
     model_params: dict,
     threshold_method: str = "f1",
 ) -> tuple[GradientBoostingClassifier, dict, float]:
-    """Train GBDT and evaluate on test set with adaptive threshold.
-
-    Args:
-        X_train, y_train: Training data
-        X_val, y_val: Validation data (used for threshold tuning)
-        X_test, y_test_true: Test data with true labels
-        model_params: GBDT hyperparameters
-        threshold_method: Method for finding optimal threshold ('f1', 'youden', 'prevalence')
-
-    Returns:
-        Trained model, metrics dict, optimal threshold
-    """
+    """Train GBDT and evaluate on test set with adaptive threshold."""
     model = GradientBoostingClassifier(**model_params)
     model.fit(X_train, y_train)
 
@@ -213,17 +126,16 @@ def train_and_evaluate(
 
 def compute_subgroup_metrics(
     model: GradientBoostingClassifier,
-    X_test: pd.DataFrame,
+    X_test: np.ndarray,
     y_test_true: np.ndarray,
-    feature_names: list[str],
     threshold: float = 0.5,
 ) -> dict:
     """Compute metrics for urban/rural subgroups with specified threshold."""
     test_proba = model.predict_proba(X_test)[:, 1]
     test_pred = (test_proba >= threshold).astype(int)
 
-    # Get urban column index
-    urban_idx = feature_names.index("urban")
+    # Urban is column index 2 in FEATURE_COLS
+    urban_idx = FEATURE_COLS.index("urban")
     urban_mask = X_test[:, urban_idx] == 1
     rural_mask = ~urban_mask
 
@@ -234,14 +146,14 @@ def compute_subgroup_metrics(
             subgroup_metrics[f"{name}_recall"] = recall_score(y_test_true[mask], test_pred[mask], zero_division=0)
             subgroup_metrics[f"{name}_precision"] = precision_score(y_test_true[mask], test_pred[mask], zero_division=0)
             subgroup_metrics[f"{name}_f1"] = f1_score(y_test_true[mask], test_pred[mask], zero_division=0)
-            subgroup_metrics[f"{name}_n"] = mask.sum()
-            subgroup_metrics[f"{name}_pos"] = y_test_true[mask].sum()
+            subgroup_metrics[f"{name}_n"] = int(mask.sum())
+            subgroup_metrics[f"{name}_pos"] = int(y_test_true[mask].sum())
         else:
             subgroup_metrics[f"{name}_auc"] = 0
             subgroup_metrics[f"{name}_recall"] = 0
             subgroup_metrics[f"{name}_precision"] = 0
             subgroup_metrics[f"{name}_f1"] = 0
-            subgroup_metrics[f"{name}_n"] = mask.sum()
+            subgroup_metrics[f"{name}_n"] = int(mask.sum())
             subgroup_metrics[f"{name}_pos"] = 0
 
     return subgroup_metrics
@@ -253,14 +165,12 @@ def write_model_report(
     baseline_subgroup: dict,
     biased_subgroup: dict,
     model_params: dict,
-    feature_names: list[str],
     data_stats: dict,
     threshold_method: str,
 ) -> None:
     """Write model comparison report to markdown file."""
     md_path = INFO_DIR / "3_model.md"
 
-    # Calculate deltas
     def delta(key: str) -> str:
         diff = biased_metrics[key] - baseline_metrics[key]
         return f"{diff:+.4f}"
@@ -401,24 +311,23 @@ def main():
 
     # Load data
     print("\nLoading data...")
-    patients, conditions, observations = load_data()
+    df = load_data()
 
     # Check required columns
-    if "has_sleep_apnea" not in patients.columns:
-        print("Error: Run 2_gen_bias.py first to add sleep apnea flags")
+    required_cols = FEATURE_COLS + ["has_sleep_apnea", "observed_sleep_apnea"]
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        print(f"Error: Missing columns: {missing}")
+        print("Run 2_gen_bias.py first to create data.csv")
         return
 
-    # Build features
-    print("Building features...")
-    df = build_features(patients, conditions, observations)
-
-    feature_cols = ["age", "male", "urban", "income", "bmi", "smoker", "hypertension", "chf", "alcohol_use"]
-    X = df[feature_cols].to_numpy()
+    # Extract features and labels
+    X = df[FEATURE_COLS].to_numpy()
     y_true = df["has_sleep_apnea"].to_numpy()
     y_observed = df["observed_sleep_apnea"].to_numpy()
 
-    print(f"  Features: {len(feature_cols)}")
     print(f"  Samples: {len(X):,}")
+    print(f"  Features: {len(FEATURE_COLS)}")
     print(f"  True prevalence: {np.mean(y_true):.2%}")
     print(f"  Observed prevalence: {np.mean(y_observed):.2%}")
 
@@ -437,28 +346,27 @@ def main():
         "n_train": len(X_train),
         "n_val": len(X_val),
         "n_test": len(X_test),
-        "train_pos": y_true_train.sum(),
-        "val_pos": y_true_val.sum(),
-        "test_pos": y_true_test.sum(),
+        "train_pos": int(y_true_train.sum()),
+        "val_pos": int(y_true_val.sum()),
+        "test_pos": int(y_true_test.sum()),
     }
 
     print(f"  Train: {len(X_train):,} ({np.mean(y_true_train):.2%} positive)")
     print(f"  Val: {len(X_val):,} ({np.mean(y_true_val):.2%} positive)")
     print(f"  Test: {len(X_test):,} ({np.mean(y_true_test):.2%} positive)")
 
-    # Model parameters - improved for imbalanced classification
+    # Model parameters
     model_params = {
         "n_estimators": 200,
         "max_depth": 5,
         "learning_rate": 0.05,
         "min_samples_split": 20,
         "min_samples_leaf": 10,
-        "subsample": 0.8,  # Stochastic gradient boosting for regularization
+        "subsample": 0.8,
         "random_state": args.seed,
     }
 
-    # Threshold selection method
-    threshold_method = "f1"  # Maximize F1 score on validation set
+    threshold_method = "f1"
 
     # Train baseline model (on true labels)
     print("\nTraining baseline model (true labels)...")
@@ -480,14 +388,10 @@ def main():
     print(f"  Optimal threshold: {biased_threshold:.4f}")
     print(f"  Test F1: {biased_metrics['test_f1']:.4f}")
 
-    # Compute subgroup metrics with respective thresholds
+    # Compute subgroup metrics
     print("\nComputing subgroup metrics...")
-    baseline_subgroup = compute_subgroup_metrics(
-        baseline_model, X_test, y_true_test, feature_cols, baseline_threshold
-    )
-    biased_subgroup = compute_subgroup_metrics(
-        biased_model, X_test, y_true_test, feature_cols, biased_threshold
-    )
+    baseline_subgroup = compute_subgroup_metrics(baseline_model, X_test, y_true_test, baseline_threshold)
+    biased_subgroup = compute_subgroup_metrics(biased_model, X_test, y_true_test, biased_threshold)
 
     # Write report
     write_model_report(
@@ -496,7 +400,6 @@ def main():
         baseline_subgroup,
         biased_subgroup,
         model_params,
-        feature_cols,
         data_stats,
         threshold_method,
     )

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-2_gen_bias.py - Generate biased dataset by masking rural sleep apnea diagnoses.
+2_gen_bias.py - Build feature matrix and generate biased dataset.
 
 This script:
-1. Adds `has_sleep_apnea` boolean to patients based on conditions data
-2. Adds `mask_sleep_apnea` boolean for rural patients randomly selected as "underdiagnosed"
-3. Outputs 2_bias_effect.md with before/after prevalence statistics
+1. Loads raw Synthea output (patients.csv, conditions.csv, observations.csv)
+2. Builds feature matrix with age, gender, BMI, comorbidities, etc.
+3. Adds sleep apnea flags and masks rural patients to simulate underdiagnosis
+4. Outputs single data.csv with all features needed for modeling
+5. Deletes source CSV files to save space
+6. Outputs 2_bias_effect.md with before/after prevalence statistics
 
 Usage:
     uv run python scripts/2_gen_bias.py [--mask-rate 0.3] [--seed 42]
@@ -27,74 +30,125 @@ OUTPUT_DIR = PROJECT_DIR / "output"
 DATA_DIR = OUTPUT_DIR / "data"
 INFO_DIR = OUTPUT_DIR / "info"
 
-# Sleep apnea SNOMED codes
+# Condition codes
 SLEEP_APNEA_CODES = {"73430006", "78275009"}
+HYPERTENSION_CODE = "59621000"
+CHF_CODE = "88805009"
+ALCOHOL_USE_CODE = "7200002"
+
+# Observation codes
+BMI_CODE = "39156-5"
+SMOKING_CODE = "72166-2"
 
 
-def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load patients and conditions data."""
+def load_raw_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load raw Synthea output files."""
     patients = pd.read_csv(DATA_DIR / "patients.csv")
     conditions = pd.read_csv(DATA_DIR / "conditions.csv")
-    return patients, conditions
+    observations = pd.read_csv(DATA_DIR / "observations.csv")
+    return patients, conditions, observations
 
 
-def add_sleep_apnea_flag(patients: pd.DataFrame, conditions: pd.DataFrame) -> pd.DataFrame:
-    """Add has_sleep_apnea boolean flag to patients."""
-    patients = patients.copy()
+def build_features(
+    patients: pd.DataFrame,
+    conditions: pd.DataFrame,
+    observations: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build feature matrix from raw Synthea data."""
+    df = pd.DataFrame()
+    df["id"] = patients["Id"]
 
-    # Find patients with sleep apnea diagnosis
-    apnea_patients = set(
-        conditions[conditions["CODE"].astype(str).isin(SLEEP_APNEA_CODES)]["PATIENT"].unique()
-    )
+    # Age from birthdate
+    patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"])
+    reference_date = patients["BIRTHDATE"].max() + pd.DateOffset(years=70)
+    df["age"] = ((reference_date - patients["BIRTHDATE"]).dt.days / 365.25).astype(int)
 
-    patients["has_sleep_apnea"] = patients["Id"].isin(apnea_patients)
-    return patients
+    # Gender (1 = male)
+    df["male"] = (patients["GENDER"] == "M").astype(int)
+
+    # Urban flag
+    df["urban"] = patients["URBAN"].astype(int)
+
+    # Income (normalized)
+    df["income"] = patients["INCOME"] / 100000  # Scale to ~0-2 range
+
+    # Conditions - check if patient has each condition
+    codes = conditions["CODE"].astype(str)
+
+    # Sleep apnea
+    apnea_patients = set(conditions[codes.isin(SLEEP_APNEA_CODES)]["PATIENT"].unique())
+    df["has_sleep_apnea"] = patients["Id"].isin(apnea_patients).astype(int)
+
+    # Other conditions
+    for code, name in [
+        (HYPERTENSION_CODE, "hypertension"),
+        (CHF_CODE, "chf"),
+        (ALCOHOL_USE_CODE, "alcohol_use"),
+    ]:
+        patient_ids = set(conditions[codes == code]["PATIENT"].unique())
+        df[name] = patients["Id"].isin(patient_ids).astype(int)
+
+    # BMI - get latest value per patient
+    bmi_obs = observations[observations["CODE"].astype(str) == BMI_CODE].copy()
+    if len(bmi_obs) > 0:
+        bmi_obs["DATE"] = pd.to_datetime(bmi_obs["DATE"])
+        bmi_latest = bmi_obs.sort_values("DATE").groupby("PATIENT").last()["VALUE"]
+        df["bmi"] = patients["Id"].map(bmi_latest).fillna(25.0)
+        df["bmi"] = pd.to_numeric(df["bmi"], errors="coerce").fillna(25.0)
+    else:
+        df["bmi"] = 25.0
+
+    # Smoking status - get latest value per patient
+    smoking_obs = observations[observations["CODE"].astype(str) == SMOKING_CODE].copy()
+    if len(smoking_obs) > 0:
+        smoking_obs["DATE"] = pd.to_datetime(smoking_obs["DATE"])
+        smoking_latest = smoking_obs.sort_values("DATE").groupby("PATIENT").last()["VALUE"]
+        smoking_map = smoking_latest.str.lower().str.contains("current|daily|occasional", na=False)
+        df["smoker"] = patients["Id"].map(smoking_map).fillna(False).astype(int)
+    else:
+        df["smoker"] = 0
+
+    return df
 
 
-def add_mask_flag(patients: pd.DataFrame, mask_rate: float, seed: int) -> pd.DataFrame:
-    """Add mask_sleep_apnea boolean flag for underdiagnosed rural patients."""
-    patients = patients.copy()
+def add_mask_flag(df: pd.DataFrame, mask_rate: float, seed: int) -> pd.DataFrame:
+    """Add mask_sleep_apnea flag for underdiagnosed rural patients."""
+    df = df.copy()
     rng = np.random.default_rng(seed)
 
-    # Initialize all as False
-    patients["mask_sleep_apnea"] = False
+    # Initialize all as 0
+    df["mask_sleep_apnea"] = 0
 
     # Find rural patients with sleep apnea
-    rural_apnea_mask = (patients["URBAN"] == False) & (patients["has_sleep_apnea"] == True)
-    rural_apnea_indices = patients[rural_apnea_mask].index
+    rural_apnea_mask = (df["urban"] == 0) & (df["has_sleep_apnea"] == 1)
+    rural_apnea_indices = df[rural_apnea_mask].index
 
     # Randomly select patients to mask
     n_to_mask = int(len(rural_apnea_indices) * mask_rate)
-    masked_indices = rng.choice(rural_apnea_indices, size=n_to_mask, replace=False)
+    if n_to_mask > 0:
+        masked_indices = rng.choice(rural_apnea_indices, size=n_to_mask, replace=False)
+        df.loc[masked_indices, "mask_sleep_apnea"] = 1
 
-    patients.loc[masked_indices, "mask_sleep_apnea"] = True
-    return patients
+    # Add observed (biased) label
+    df["observed_sleep_apnea"] = ((df["has_sleep_apnea"] == 1) & (df["mask_sleep_apnea"] == 0)).astype(int)
+
+    return df
 
 
-def compute_prevalence_stats(patients: pd.DataFrame, use_masked: bool = False) -> dict:
-    """Compute prevalence statistics.
-
-    Args:
-        patients: DataFrame with has_sleep_apnea and mask_sleep_apnea columns
-        use_masked: If True, treat masked cases as not having sleep apnea (biased view)
-    """
-    patients = patients.copy()
-
+def compute_prevalence_stats(df: pd.DataFrame, use_masked: bool = False) -> dict:
+    """Compute prevalence statistics."""
     # Determine effective sleep apnea status
     if use_masked:
-        patients["effective_apnea"] = patients["has_sleep_apnea"] & ~patients["mask_sleep_apnea"]
+        effective_apnea = df["observed_sleep_apnea"]
     else:
-        patients["effective_apnea"] = patients["has_sleep_apnea"]
+        effective_apnea = df["has_sleep_apnea"]
 
-    n_total = len(patients)
-    n_apnea = patients["effective_apnea"].sum()
+    n_total = len(df)
+    n_apnea = effective_apnea.sum()
 
-    # Calculate age decades
-    patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"])
-    reference_date = patients["BIRTHDATE"].max() + pd.DateOffset(years=70)
-    patients["age"] = ((reference_date - patients["BIRTHDATE"]).dt.days / 365.25).astype(int)
-    patients["decade"] = pd.cut(
-        patients["age"],
+    # Age decades
+    decade = pd.cut(
+        df["age"],
         bins=[0, 69, 79, 89, 150],
         labels=["60-69", "70-79", "80-89", "90+"]
     )
@@ -106,43 +160,43 @@ def compute_prevalence_stats(patients: pd.DataFrame, use_masked: bool = False) -
     }
 
     # By location
-    for loc_name, loc_val in [("urban", True), ("rural", False)]:
-        subset = patients[patients["URBAN"] == loc_val]
-        n = len(subset)
-        n_apnea_loc = subset["effective_apnea"].sum()
-        stats[f"n_{loc_name}"] = n
+    for loc_name, loc_val in [("urban", 1), ("rural", 0)]:
+        subset_mask = df["urban"] == loc_val
+        n = subset_mask.sum()
+        n_apnea_loc = effective_apnea[subset_mask].sum()
+        stats[f"n_{loc_name}"] = int(n)
         stats[f"n_apnea_{loc_name}"] = int(n_apnea_loc)
         stats[f"pct_apnea_{loc_name}"] = 100 * n_apnea_loc / n if n else 0
 
     # By gender
-    for gender_name, gender_val in [("male", "M"), ("female", "F")]:
-        subset = patients[patients["GENDER"] == gender_val]
-        n = len(subset)
-        n_apnea_g = subset["effective_apnea"].sum()
-        stats[f"n_{gender_name}"] = n
+    for gender_name, gender_val in [("male", 1), ("female", 0)]:
+        subset_mask = df["male"] == gender_val
+        n = subset_mask.sum()
+        n_apnea_g = effective_apnea[subset_mask].sum()
+        stats[f"n_{gender_name}"] = int(n)
         stats[f"n_apnea_{gender_name}"] = int(n_apnea_g)
         stats[f"pct_apnea_{gender_name}"] = 100 * n_apnea_g / n if n else 0
 
     # By gender x location
-    for gender_name, gender_val in [("male", "M"), ("female", "F")]:
-        for loc_name, loc_val in [("urban", True), ("rural", False)]:
-            subset = patients[(patients["GENDER"] == gender_val) & (patients["URBAN"] == loc_val)]
-            n = len(subset)
-            n_apnea_gl = subset["effective_apnea"].sum()
+    for gender_name, gender_val in [("male", 1), ("female", 0)]:
+        for loc_name, loc_val in [("urban", 1), ("rural", 0)]:
+            subset_mask = (df["male"] == gender_val) & (df["urban"] == loc_val)
+            n = subset_mask.sum()
+            n_apnea_gl = effective_apnea[subset_mask].sum()
             key = f"{gender_name}_{loc_name}"
-            stats[f"n_{key}"] = n
+            stats[f"n_{key}"] = int(n)
             stats[f"n_apnea_{key}"] = int(n_apnea_gl)
             stats[f"pct_apnea_{key}"] = 100 * n_apnea_gl / n if n else 0
 
     # By decade
     decade_stats = []
-    for decade in ["60-69", "70-79", "80-89", "90+"]:
-        subset = patients[patients["decade"] == decade]
-        n = len(subset)
-        n_apnea_d = subset["effective_apnea"].sum()
+    for dec in ["60-69", "70-79", "80-89", "90+"]:
+        subset_mask = decade == dec
+        n = subset_mask.sum()
+        n_apnea_d = effective_apnea[subset_mask].sum()
         decade_stats.append({
-            "decade": decade,
-            "n": n,
+            "decade": dec,
+            "n": int(n),
             "n_apnea": int(n_apnea_d),
             "pct": 100 * n_apnea_d / n if n else 0,
         })
@@ -152,7 +206,7 @@ def compute_prevalence_stats(patients: pd.DataFrame, use_masked: bool = False) -
 
 
 def write_bias_effect_report(
-    patients: pd.DataFrame,
+    df: pd.DataFrame,
     before_stats: dict,
     after_stats: dict,
     mask_rate: float,
@@ -162,23 +216,15 @@ def write_bias_effect_report(
     md_path = INFO_DIR / "2_bias_effect.md"
 
     # Masking summary
-    n_rural_apnea = len(patients[(patients["URBAN"] == False) & (patients["has_sleep_apnea"] == True)])
-    n_masked = patients["mask_sleep_apnea"].sum()
+    n_rural_apnea = ((df["urban"] == 0) & (df["has_sleep_apnea"] == 1)).sum()
+    n_masked = df["mask_sleep_apnea"].sum()
 
-    # Build comparison rows for various breakdowns
-    def comparison_row(label: str, before_key: str, after_key: str) -> str:
-        b_n = before_stats.get(f"n_apnea_{before_key}", before_stats.get(f"n_{before_key}", 0))
-        b_pct = before_stats.get(f"pct_apnea_{before_key}", before_stats.get(f"pct_{before_key}", 0))
-        a_n = after_stats.get(f"n_apnea_{after_key}", after_stats.get(f"n_{after_key}", 0))
-        a_pct = after_stats.get(f"pct_apnea_{after_key}", after_stats.get(f"pct_{after_key}", 0))
-
-        # Handle the case where keys are for totals
-        if before_key == "total":
-            b_n = before_stats["n_apnea"]
-            b_pct = before_stats["pct_apnea"]
-            a_n = after_stats["n_apnea"]
-            a_pct = after_stats["pct_apnea"]
-
+    # Build comparison rows
+    def comparison_row(label: str, key: str) -> str:
+        b_n = before_stats.get(f"n_apnea_{key}", 0)
+        b_pct = before_stats.get(f"pct_apnea_{key}", 0)
+        a_n = after_stats.get(f"n_apnea_{key}", 0)
+        a_pct = after_stats.get(f"pct_apnea_{key}", 0)
         diff = a_pct - b_pct
         return f"| {label} | {b_n:,} | {b_pct:.2f}% | {a_n:,} | {a_pct:.2f}% | {diff:+.2f}% |"
 
@@ -217,24 +263,24 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 | Location | Before Cases | Before % | After Cases | After % | Change |
 |----------|--------------|----------|-------------|---------|--------|
-{comparison_row("Urban", "urban", "urban")}
-{comparison_row("Rural", "rural", "rural")}
+{comparison_row("Urban", "urban")}
+{comparison_row("Rural", "rural")}
 
 ## Prevalence by Gender
 
 | Gender | Before Cases | Before % | After Cases | After % | Change |
 |--------|--------------|----------|-------------|---------|--------|
-{comparison_row("Male", "male", "male")}
-{comparison_row("Female", "female", "female")}
+{comparison_row("Male", "male")}
+{comparison_row("Female", "female")}
 
 ## Prevalence by Gender and Location
 
 | Group | Before Cases | Before % | After Cases | After % | Change |
 |-------|--------------|----------|-------------|---------|--------|
-{comparison_row("Male Urban", "male_urban", "male_urban")}
-{comparison_row("Male Rural", "male_rural", "male_rural")}
-{comparison_row("Female Urban", "female_urban", "female_urban")}
-{comparison_row("Female Rural", "female_rural", "female_rural")}
+{comparison_row("Male Urban", "male_urban")}
+{comparison_row("Male Rural", "male_rural")}
+{comparison_row("Female Urban", "female_urban")}
+{comparison_row("Female Rural", "female_rural")}
 
 ## Prevalence by Age Decade
 
@@ -246,8 +292,8 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 - **True prevalence**: {before_stats['pct_apnea']:.2f}% of all patients have sleep apnea
 - **Observed prevalence**: {after_stats['pct_apnea']:.2f}% after rural underdiagnosis bias
-- **Rural underdiagnosis**: {before_stats['pct_apnea_rural']:.2f}% → {after_stats['pct_apnea_rural']:.2f}% ({after_stats['pct_apnea_rural'] - before_stats['pct_apnea_rural']:+.2f}%)
-- **Urban (unaffected)**: {before_stats['pct_apnea_urban']:.2f}% → {after_stats['pct_apnea_urban']:.2f}%
+- **Rural underdiagnosis**: {before_stats['pct_apnea_rural']:.2f}% -> {after_stats['pct_apnea_rural']:.2f}% ({after_stats['pct_apnea_rural'] - before_stats['pct_apnea_rural']:+.2f}%)
+- **Urban (unaffected)**: {before_stats['pct_apnea_urban']:.2f}% -> {after_stats['pct_apnea_urban']:.2f}%
 """
 
     md_path.write_text(content)
@@ -255,44 +301,54 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate biased dataset by masking rural diagnoses")
+    parser = argparse.ArgumentParser(description="Build features and generate biased dataset")
     parser.add_argument("--mask-rate", "-m", type=float, default=0.3, help="Fraction of rural apnea to mask (default: 0.3)")
     parser.add_argument("--seed", "-s", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Sleep Apnea v2: Generate Bias")
+    print("Sleep Apnea v2: Build Features & Generate Bias")
     print("=" * 60)
 
-    # Load data
-    print("\nLoading data...")
-    patients, conditions = load_data()
+    # Load raw data
+    print("\nLoading raw Synthea data...")
+    patients, conditions, observations = load_raw_data()
     print(f"  Patients: {len(patients):,}")
     print(f"  Conditions: {len(conditions):,}")
+    print(f"  Observations: {len(observations):,}")
 
-    # Add sleep apnea flag
-    print("\nAdding sleep apnea flags...")
-    patients = add_sleep_apnea_flag(patients, conditions)
-    n_apnea = patients["has_sleep_apnea"].sum()
-    print(f"  Patients with sleep apnea: {n_apnea:,} ({100*n_apnea/len(patients):.2f}%)")
+    # Build features
+    print("\nBuilding feature matrix...")
+    df = build_features(patients, conditions, observations)
+    print(f"  Features: age, male, urban, income, bmi, smoker, hypertension, chf, alcohol_use")
+    print(f"  Patients with sleep apnea: {df['has_sleep_apnea'].sum():,} ({100*df['has_sleep_apnea'].mean():.2f}%)")
 
     # Add mask flag
     print(f"\nApplying {args.mask_rate:.0%} mask rate to rural patients...")
-    patients = add_mask_flag(patients, args.mask_rate, args.seed)
-    n_masked = patients["mask_sleep_apnea"].sum()
+    df = add_mask_flag(df, args.mask_rate, args.seed)
+    n_masked = df["mask_sleep_apnea"].sum()
     print(f"  Patients masked: {n_masked:,}")
 
     # Compute before/after stats
     print("\nComputing prevalence statistics...")
-    before_stats = compute_prevalence_stats(patients, use_masked=False)
-    after_stats = compute_prevalence_stats(patients, use_masked=True)
+    before_stats = compute_prevalence_stats(df, use_masked=False)
+    after_stats = compute_prevalence_stats(df, use_masked=True)
 
-    # Save updated patients
-    patients.to_csv(DATA_DIR / "patients.csv", index=False)
-    print(f"\nUpdated {DATA_DIR / 'patients.csv'}")
+    # Save consolidated data.csv
+    output_path = DATA_DIR / "data.csv"
+    df.to_csv(output_path, index=False)
+    print(f"\nWrote {output_path} ({output_path.stat().st_size:,} bytes)")
+
+    # Delete source files
+    print("\nCleaning up source files...")
+    for filename in ["patients.csv", "conditions.csv", "observations.csv"]:
+        filepath = DATA_DIR / filename
+        if filepath.exists():
+            filepath.unlink()
+            print(f"  Deleted {filename}")
 
     # Write report
-    write_bias_effect_report(patients, before_stats, after_stats, args.mask_rate, args.seed)
+    write_bias_effect_report(df, before_stats, after_stats, args.mask_rate, args.seed)
 
     # Console summary
     print("\n" + "=" * 60)
@@ -308,7 +364,7 @@ def main():
     print(f"  After:  {after_stats['pct_apnea_urban']:.2f}%")
 
     print("\n" + "=" * 60)
-    print(f"Complete! See {INFO_DIR / '2_bias_effect.md'}")
+    print(f"Complete! Output: {output_path}")
     print("=" * 60)
 
 

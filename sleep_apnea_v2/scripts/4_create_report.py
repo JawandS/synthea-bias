@@ -5,6 +5,12 @@
 This script compiles all analysis outputs into a single report.md file that
 documents the complete sleep apnea underdiagnosis bias case study.
 
+Requires:
+    - output/data/data.csv (from 2_gen_bias.py)
+    - output/info/1_summary_stats.md (optional, from 1_generate_data.py)
+    - output/info/2_bias_effect.md (optional, from 2_gen_bias.py)
+    - output/info/3_model.md (optional, from 3_train_models.py)
+
 Usage:
     uv run python scripts/4_create_report.py
 """
@@ -73,37 +79,37 @@ def extract_key_findings(md_content: str) -> str | None:
 
 
 def read_stats_from_data() -> dict[str, int | float]:
-    """Read statistics directly from data files."""
-    patients = pd.read_csv(DATA_DIR / "patients.csv")
+    """Read statistics directly from data.csv."""
+    df = pd.read_csv(DATA_DIR / "data.csv")
 
     stats: dict[str, int | float] = {
-        "n_patients": len(patients),
-        "n_urban": len(patients[patients["URBAN"] == True]),
-        "n_rural": len(patients[patients["URBAN"] == False]),
-        "n_male": len(patients[patients["GENDER"] == "M"]),
-        "n_female": len(patients[patients["GENDER"] == "F"]),
+        "n_patients": len(df),
+        "n_urban": int((df["urban"] == 1).sum()),
+        "n_rural": int((df["urban"] == 0).sum()),
+        "n_male": int((df["male"] == 1).sum()),
+        "n_female": int((df["male"] == 0).sum()),
     }
 
     stats["pct_urban"] = 100 * stats["n_urban"] / stats["n_patients"]
     stats["pct_rural"] = 100 * stats["n_rural"] / stats["n_patients"]
 
-    if "has_sleep_apnea" in patients.columns:
-        stats["n_apnea"] = patients["has_sleep_apnea"].sum()
+    if "has_sleep_apnea" in df.columns:
+        stats["n_apnea"] = int(df["has_sleep_apnea"].sum())
         stats["pct_apnea"] = 100 * stats["n_apnea"] / stats["n_patients"]
 
         # By location
-        urban = patients[patients["URBAN"] == True]
-        rural = patients[patients["URBAN"] == False]
-        stats["urban_apnea"] = urban["has_sleep_apnea"].sum()
-        stats["rural_apnea"] = rural["has_sleep_apnea"].sum()
-        stats["pct_urban_apnea"] = 100 * stats["urban_apnea"] / len(urban) if len(urban) else 0
-        stats["pct_rural_apnea"] = 100 * stats["rural_apnea"] / len(rural) if len(rural) else 0
+        urban_mask = df["urban"] == 1
+        rural_mask = df["urban"] == 0
+        stats["urban_apnea"] = int(df.loc[urban_mask, "has_sleep_apnea"].sum())
+        stats["rural_apnea"] = int(df.loc[rural_mask, "has_sleep_apnea"].sum())
+        stats["pct_urban_apnea"] = 100 * stats["urban_apnea"] / stats["n_urban"] if stats["n_urban"] else 0
+        stats["pct_rural_apnea"] = 100 * stats["rural_apnea"] / stats["n_rural"] if stats["n_rural"] else 0
 
-        if "mask_sleep_apnea" in patients.columns:
-            stats["n_masked"] = patients["mask_sleep_apnea"].sum()
-            rural_apnea = patients[(patients["URBAN"] == False) & (patients["has_sleep_apnea"] == True)]
-            stats["n_rural_apnea"] = len(rural_apnea)
-            stats["mask_rate"] = 100 * stats["n_masked"] / stats["n_rural_apnea"] if stats["n_rural_apnea"] else 0
+        if "mask_sleep_apnea" in df.columns:
+            stats["n_masked"] = int(df["mask_sleep_apnea"].sum())
+            n_rural_apnea = int(((df["urban"] == 0) & (df["has_sleep_apnea"] == 1)).sum())
+            stats["n_rural_apnea"] = n_rural_apnea
+            stats["mask_rate"] = 100 * stats["n_masked"] / n_rural_apnea if n_rural_apnea else 0
 
     return stats
 
@@ -458,8 +464,8 @@ def main():
     print("=" * 60)
 
     # Check for required data
-    if not (DATA_DIR / "patients.csv").exists():
-        print("Error: patients.csv not found. Run 1_generate_data.py first.")
+    if not (DATA_DIR / "data.csv").exists():
+        print("Error: data.csv not found. Run 1_generate_data.py and 2_gen_bias.py first.")
         return
 
     print("\nReading data and generating report...")

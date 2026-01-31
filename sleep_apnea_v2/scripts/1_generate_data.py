@@ -7,10 +7,22 @@ This script:
 2. Copies relevant CSV files to output/data/
 3. Adds urban/rural flag to patients via SDoH county lookup
 4. Filters observations to only include relevant codes (BMI, smoking)
-5. Generates summary statistics in output/info/1_summary_stats.md
+5. Filters conditions to only include relevant codes (sleep apnea, hypertension, CHF, alcohol)
+6. Generates summary statistics in output/info/1_summary_stats.md
 
 Usage:
     uv run python scripts/1_generate_data.py [--population N] [--seed N] [--skip-synthea]
+
+Options:
+    --population, -p N   Number of patients to generate (default: 5000)
+    --seed, -s N         Random seed for reproducibility (default: 42)
+    --skip-synthea       Skip Synthea generation, only reprocess existing data
+
+Optimizations:
+    - Limits exported history to 5 years (not full patient lifetime)
+    - Disables FHIR, C-CDA, and metadata exports
+    - Filters conditions.csv to only relevant codes (reduces ~700MB to ~500KB)
+    - Filters observations.csv to BMI + smoking codes only
 """
 
 from __future__ import annotations
@@ -53,9 +65,24 @@ HYPERTENSION_CODE = "59621000"
 CHF_CODE = "88805009"
 OBESITY_CODE = "162864005"
 
+# Condition codes to keep for modeling (sleep apnea, hypertension, CHF, alcohol use)
+CONDITION_CODES = {
+    "73430006",  # Obstructive sleep apnea
+    "78275009",  # Obstructive sleep apnea syndrome
+    "59621000",  # Hypertension
+    "88805009",  # CHF
+    "7200002",   # Alcohol use disorder
+}
+
+
 
 def run_synthea(population: int, seed: int) -> None:
-    """Run Synthea to generate synthetic patient data."""
+    """Run Synthea to generate synthetic patient data.
+
+    Args:
+        population: Number of patients to generate
+        seed: Random seed for reproducibility
+    """
     if SYNTHEA_OUTPUT_DIR.exists():
         print(f"Clearing old output: {SYNTHEA_OUTPUT_DIR}")
         shutil.rmtree(SYNTHEA_OUTPUT_DIR)
@@ -69,14 +96,19 @@ def run_synthea(population: int, seed: int) -> None:
         "-p", str(population),
         "-a", "60-100",
         "--generate.only_alive_patients=false",
+        # CSV export settings
         "--exporter.csv.export=true",
         "--exporter.csv.append_mode=false",
+        # Disable all other exporters
         "--exporter.fhir.export=false",
         "--exporter.ccda.export=false",
         "--exporter.hospital.fhir.export=false",
         "--exporter.practitioner.fhir.export=false",
-        "--exporter.years_of_history=0",
+        "--exporter.metadata.export=false",
+        # Limit history to 5 years (0 = unlimited, which generates more data)
+        "--exporter.years_of_history=5",
         f"--exporter.baseDirectory={SYNTHEA_OUTPUT_DIR.name}",
+        # State (positional argument, must come last)
         "Vermont",
     ]
 
@@ -122,6 +154,11 @@ def filter_observations(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["CODE"].astype(str).isin(OBSERVATION_CODES)].copy()
 
 
+def filter_conditions(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep only conditions needed for modeling."""
+    return df[df["CODE"].astype(str).isin(CONDITION_CODES)].copy()
+
+
 def copy_and_process_data() -> None:
     """Copy CSV files from Synthea output, add urban flag, filter observations."""
     csv_dir = SYNTHEA_OUTPUT_DIR / "csv"
@@ -153,6 +190,10 @@ def copy_and_process_data() -> None:
             original_len = len(df)
             df = filter_observations(df)
             print(f"  Filtered observations: {original_len:,} -> {len(df):,}")
+        elif filename == "conditions.csv":
+            original_len = len(df)
+            df = filter_conditions(df)
+            print(f"  Filtered conditions: {original_len:,} -> {len(df):,}")
 
         df.to_csv(dst, index=False)
         print(f"Wrote {filename} ({dst.stat().st_size:,} bytes)")
