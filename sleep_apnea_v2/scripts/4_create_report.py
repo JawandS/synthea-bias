@@ -52,11 +52,11 @@ def extract_table_from_md(md_content: str, table_header: str) -> str | None:
     return "\n".join(table_lines) if table_lines else None
 
 
-def read_stats_from_data() -> dict:
+def read_stats_from_data() -> dict[str, int | float]:
     """Read statistics directly from data files."""
     patients = pd.read_csv(DATA_DIR / "patients.csv")
 
-    stats = {
+    stats: dict[str, int | float] = {
         "n_patients": len(patients),
         "n_urban": len(patients[patients["URBAN"] == True]),
         "n_rural": len(patients[patients["URBAN"] == False]),
