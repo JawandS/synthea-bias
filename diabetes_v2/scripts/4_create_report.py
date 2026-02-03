@@ -46,7 +46,6 @@ def extract_table_from_md(md_content: str, table_header: str) -> str | None:
 
     for i, line in enumerate(lines):
         if table_header in line:
-            # Find the table (skip blank lines)
             for j in range(i + 1, len(lines)):
                 if lines[j].strip().startswith("|"):
                     in_table = True
@@ -69,51 +68,12 @@ def extract_key_findings(md_content: str) -> str | None:
             in_findings = True
             continue
         if in_findings:
-            # Stop at next section or end
             if line.startswith("## ") or line.startswith("---"):
                 break
             findings_lines.append(line)
 
     content = "\n".join(findings_lines).strip()
     return content if content else None
-
-
-def extract_metric_from_table(md_content: str, table_header: str, row_label: str, col_index: int) -> float | None:
-    """Extract a specific metric value from a markdown table.
-
-    Args:
-        md_content: Full markdown content
-        table_header: Header that precedes the table (e.g., "### Recall by Subgroup")
-        row_label: Label in first column to find (e.g., "Rural")
-        col_index: 0-based index of column to extract (after the label column)
-
-    Returns:
-        Float value or None if not found
-    """
-    lines = md_content.split("\n")
-    in_table = False
-    found_header = False
-
-    for line in lines:
-        if table_header in line:
-            found_header = True
-            continue
-        if found_header and line.strip().startswith("|"):
-            # Skip header row and separator
-            if "---" in line or row_label not in line:
-                in_table = True
-                continue
-            if row_label in line:
-                # Parse the row
-                parts = [p.strip() for p in line.split("|") if p.strip()]
-                if len(parts) > col_index + 1:
-                    try:
-                        return float(parts[col_index + 1])
-                    except ValueError:
-                        return None
-        elif found_header and in_table and not line.strip().startswith("|"):
-            break
-    return None
 
 
 def read_stats_from_data() -> dict[str, int | float]:
@@ -133,23 +93,14 @@ def read_stats_from_data() -> dict[str, int | float]:
         stats["n_diabetes"] = int(df["has_diabetes"].sum())
         stats["pct_diabetes"] = 100 * stats["n_diabetes"] / stats["n_patients"]
 
-    if "has_hyperglycemia" in df.columns:
-        stats["n_hyperglycemia"] = int(df["has_hyperglycemia"].sum())
-        stats["pct_hyperglycemia"] = 100 * stats["n_hyperglycemia"] / stats["n_patients"]
-
     if "has_hypertriglyceridemia" in df.columns:
         stats["n_hypertriglyceridemia"] = int(df["has_hypertriglyceridemia"].sum())
         stats["pct_hypertriglyceridemia"] = 100 * stats["n_hypertriglyceridemia"] / stats["n_patients"]
 
-    if "mask_hyperglycemia" in df.columns:
-        stats["n_masked_hg"] = int(df["mask_hyperglycemia"].sum())
-        n_hg = int(df["has_hyperglycemia"].sum())
-        stats["mask_rate_hg"] = 100 * stats["n_masked_hg"] / n_hg if n_hg else 0
-
     if "mask_hypertriglyceridemia" in df.columns:
-        stats["n_masked_ht"] = int(df["mask_hypertriglyceridemia"].sum())
+        stats["n_masked"] = int(df["mask_hypertriglyceridemia"].sum())
         n_ht = int(df["has_hypertriglyceridemia"].sum())
-        stats["mask_rate_ht"] = 100 * stats["n_masked_ht"] / n_ht if n_ht else 0
+        stats["mask_rate"] = 100 * stats["n_masked"] / n_ht if n_ht else 0
 
     return stats
 
@@ -180,35 +131,36 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 This case study demonstrates how **documentation bias** in electronic health records can
 affect machine learning models that predict diabetes. Specifically, we examine how
-incomplete documentation of metabolic conditions (hyperglycemia and hypertriglyceridemia)
-reduces the apparent association between these conditions and diabetes.
+incomplete documentation of hypertriglyceridemia (elevated triglycerides) reduces the
+apparent association between this metabolic condition and diabetes.
 
 When ML models are trained on data with incomplete documentation, they learn weaker
 associations for the under-documented features, potentially relying more heavily on
-other features like demographics or lab values.
+other features like A1c, BMI, or demographics.
 
 ### The Problem
 
-Diabetes affects approximately 10-12% of the adult population. Several metabolic
-conditions are highly predictive of diabetes:
+Diabetes affects approximately 10-12% of the adult population. Hypertriglyceridemia
+(elevated triglycerides, SNOMED 302870006) is a key metabolic risk marker:
 
-- **Hyperglycemia**: Elevated blood sugar levels (SNOMED 80394007)
-- **Hypertriglyceridemia**: Elevated triglyceride levels (SNOMED 302870006)
+- Part of **metabolic syndrome** cluster
+- Signals underlying insulin resistance
+- Often co-occurs with or precedes diabetes
+- Distinct from diabetes itself (unlike hyperglycemia)
 
-These conditions may be under-documented in EHR data due to:
+Hypertriglyceridemia may be under-documented in EHR data due to:
+- Labs show elevated triglycerides but diagnosis code not entered
 - Time pressure during clinical encounters
-- Variability in documentation practices across providers
-- Incomplete lab panels or follow-up testing
-- EHR usability issues and alert fatigue
 - Focus on primary diagnosis rather than secondary findings
+- Variability in documentation practices across providers
 
-This creates **documentation bias**: patients may have these conditions but they
-are not recorded in the medical record, weakening the apparent predictive signal.
+This creates **documentation bias**: the condition exists but isn't recorded,
+weakening its apparent predictive signal for diabetes.
 
 ### Study Design
 
-1. **Generate synthetic population** with realistic diabetes and metabolic condition prevalence
-2. **Apply documentation bias** by randomly masking a portion of metabolic condition diagnoses
+1. **Generate synthetic population** with realistic diabetes and hypertriglyceridemia prevalence
+2. **Apply documentation bias** by randomly masking a portion of hypertriglyceridemia diagnoses
 3. **Train ML models** using both true and observed (biased) features
 4. **Compare performance** to quantify the bias impact on feature importance and predictions
 
@@ -229,20 +181,19 @@ not real) patient data including:
 
 ### Metabolic Syndrome Module
 
-The metabolic syndrome disease progression is modeled using a Synthea Generic Module
-(`metabolic_syndrome_care.json`). Key characteristics:
+The metabolic syndrome disease progression is modeled using a Synthea Generic Module.
+Key characteristics:
 
 **Risk Factors**:
 - BMI >= 30 (obesity)
-- Family history of diabetes
 - Age > 40 years
 - Sedentary lifestyle
+- Family history
 
-**Progression Pathway**:
-1. Metabolic risk factor accumulation
-2. Development of prediabetes
-3. Potential progression to type 2 diabetes
-4. Associated conditions: hyperglycemia, hypertriglyceridemia, hypertension
+**Metabolic Conditions**:
+- Hypertriglyceridemia (elevated triglycerides)
+- Prediabetes
+- Type 2 diabetes
 
 ### Generated Population
 
@@ -259,9 +210,6 @@ The metabolic syndrome disease progression is modeled using a Synthea Generic Mo
     if "n_diabetes" in stats:
         report += f"""| Diabetes cases | {stats['n_diabetes']:,} ({stats['pct_diabetes']:.1f}%) |
 """
-    if "n_hyperglycemia" in stats:
-        report += f"""| Hyperglycemia cases | {stats['n_hyperglycemia']:,} ({stats['pct_hyperglycemia']:.1f}%) |
-"""
     if "n_hypertriglyceridemia" in stats:
         report += f"""| Hypertriglyceridemia cases | {stats['n_hypertriglyceridemia']:,} ({stats['pct_hypertriglyceridemia']:.1f}%) |
 """
@@ -274,42 +222,37 @@ The metabolic syndrome disease progression is modeled using a Synthea Generic Mo
 ### Documentation Bias Simulation
 
 To simulate real-world documentation bias, we apply **random masking** to
-hyperglycemia and hypertriglyceridemia diagnoses. This models the scenario where
-patients have these conditions but they are not recorded due to documentation gaps.
+hypertriglyceridemia diagnoses. This models the scenario where patients have
+the condition but it's not recorded due to documentation gaps.
 
 **Masking Process**:
-1. Identify all patients with true hyperglycemia/hypertriglyceridemia diagnosis
+1. Identify all patients with true hypertriglyceridemia diagnosis
 2. Randomly select a portion (mask rate) to have their diagnosis "hidden"
-3. Create two feature sets:
-   - `has_*`: True underlying condition status
-   - `observed_*`: What appears in medical records (true & ~masked)
+3. Create two feature versions:
+   - `has_hypertriglyceridemia`: True underlying condition status
+   - `observed_hypertriglyceridemia`: What appears in medical records
 
-**Key Difference from Label Bias**:
-Unlike underdiagnosis bias which affects the target variable, documentation bias
-affects *features* used to predict the target. The diabetes diagnosis itself
-remains accurate - only the metabolic condition features are masked.
+**Key Characteristic**:
+Unlike demographic-based bias (e.g., rural underdiagnosis), documentation bias
+affects patients randomly across all groups. This isolates the effect of
+incomplete feature information from confounding demographic factors.
 
 """
 
-    if "n_masked_hg" in stats or "n_masked_ht" in stats:
-        report += """### Masking Statistics
+    if "n_masked" in stats:
+        report += f"""### Masking Statistics
 
-| Condition | Total Cases | Masked | Effective Mask Rate |
-|-----------|-------------|--------|---------------------|
+| Metric | Value |
+|--------|-------|
+| Patients with hypertriglyceridemia | {stats['n_hypertriglyceridemia']:,} |
+| Patients masked (under-documented) | {stats['n_masked']:,} |
+| Effective mask rate | {stats['mask_rate']:.1f}% |
+
 """
-        if "n_masked_hg" in stats:
-            report += f"""| Hyperglycemia | {stats['n_hyperglycemia']:,} | {stats['n_masked_hg']:,} | {stats['mask_rate_hg']:.1f}% |
-"""
-        if "n_masked_ht" in stats:
-            report += f"""| Hypertriglyceridemia | {stats['n_hypertriglyceridemia']:,} | {stats['n_masked_ht']:,} | {stats['mask_rate_ht']:.1f}% |
-"""
-        report += "\n"
 
     # Include bias effect details if available
     if bias_md:
         report += """### Impact on Observed Prevalence
-
-Documentation bias reduces the apparent prevalence of metabolic conditions:
 
 """
         overall_table = extract_table_from_md(bias_md, "## Overall Effect")
@@ -329,10 +272,10 @@ Documentation bias reduces the apparent prevalence of metabolic conditions:
 
 We train two Gradient Boosted Decision Tree (GBDT) models:
 
-1. **Baseline Model**: Uses true features (`has_hyperglycemia`, `has_hypertriglyceridemia`)
+1. **Baseline Model**: Uses true feature (`has_hypertriglyceridemia`)
    - Represents the ideal scenario with complete documentation
 
-2. **Biased Model**: Uses observed features (`observed_hyperglycemia`, `observed_hypertriglyceridemia`)
+2. **Biased Model**: Uses observed feature (`observed_hypertriglyceridemia`)
    - Represents real-world scenario with documentation bias
 
 Both models predict the **same target** (`has_diabetes`) and are evaluated on
@@ -352,43 +295,24 @@ identical test data to measure the impact of feature bias.
 | obesity | Obesity diagnosis |
 | hypertension | Hypertension diagnosis |
 | hyperlipidemia | Hyperlipidemia diagnosis |
-| hyperglycemia | Hyperglycemia (true or observed) |
 | hypertriglyceridemia | Hypertriglyceridemia (true or observed) |
 
 """
 
     # Include model results if available
     if model_md:
-        # Extract model specification
         spec_table = extract_table_from_md(model_md, "## Model Specification")
         if spec_table:
             report += "### Model Specification\n\n" + spec_table + "\n\n"
 
-        # Extract threshold info
-        threshold_table = extract_table_from_md(model_md, "## Threshold Selection")
-        if threshold_table:
-            report += "### Threshold Selection\n\n" + threshold_table + "\n\n"
-
-        # Extract performance tables
         overall_table = extract_table_from_md(model_md, "## Overall Performance")
         if overall_table:
             report += "### Overall Performance\n\n" + overall_table + "\n\n"
 
-        # Extract feature importance
         importance_table = extract_table_from_md(model_md, "## Feature Importance")
         if importance_table:
             report += "### Feature Importance\n\n" + importance_table + "\n\n"
 
-        # Extract subgroup tables
-        composition_table = extract_table_from_md(model_md, "### Test Set Composition by Metabolic Status")
-        if composition_table:
-            report += "### Subgroup Composition (by True Metabolic Status)\n\n" + composition_table + "\n\n"
-
-        recall_table = extract_table_from_md(model_md, "### Recall by Subgroup")
-        if recall_table:
-            report += "### Subgroup Recall\n\n" + recall_table + "\n\n"
-
-        # Extract key findings
         key_findings = extract_key_findings(model_md)
         if key_findings:
             report += "### Key Model Findings\n\n" + key_findings + "\n\n"
@@ -401,88 +325,69 @@ identical test data to measure the impact of feature bias.
 | n_estimators | 200 |
 | max_depth | 5 |
 | learning_rate | 0.05 |
-| min_samples_split | 20 |
-| min_samples_leaf | 10 |
-| subsample | 0.8 |
 
 *Note: Run 3_train_models.py to generate detailed model results.*
 
 """
 
-    # Generate findings section
-    if model_md:
-        findings_content = """
-1. **Reduced Feature Importance**: The biased model assigns lower importance to
-   hyperglycemia and hypertriglyceridemia features, as the masked values dilute
-   the apparent signal.
-
-2. **Compensatory Reliance**: Other features (like A1c, BMI, or demographics) may
-   see increased importance as the model compensates for the weakened metabolic signals.
-
-3. **Potential Subgroup Effects**: Patients who truly have metabolic conditions
-   may see different prediction patterns, particularly if documentation rates
-   vary by demographic factors.
-"""
-    else:
-        findings_content = """
-1. **Expected Feature Importance Reduction**: Models trained with masked features
-   will learn weaker associations for hyperglycemia and hypertriglyceridemia.
-
-2. **Run model training** (script 3) to see quantified results.
-"""
-
-    report += f"""
+    report += """
 ---
 
 ## 5. Key Findings
 
 ### Impact of Documentation Bias
-{findings_content}
-### Why Documentation Bias Matters
 
-- **Different from Label Bias**: Unlike underdiagnosis bias (where the target is
-  wrong), documentation bias affects features while the target remains correct.
+1. **Reduced Feature Importance**: The biased model assigns lower importance to
+   the hypertriglyceridemia feature, as masked values dilute the signal.
 
-- **Feature Importance Shifts**: The model may learn to rely more heavily on
-  other features, changing its behavior in populations with different documentation
-  practices.
+2. **Compensatory Reliance**: Other features (A1c, BMI, prediabetes) may see
+   increased importance as the model compensates for the weakened signal.
+
+3. **Clinical Validity**: Unlike hyperglycemia (which is definitionally diabetes),
+   hypertriglyceridemia is a genuine risk marker - making this a clinically
+   realistic documentation bias scenario.
+
+### Why This Matters
+
+- **Different from Label Bias**: Documentation bias affects *features* while the
+  target remains correct. The model learns from incomplete information rather
+  than incorrect labels.
+
+- **Feature Importance Shifts**: Models may over-rely on well-documented features
+  and under-utilize poorly documented but clinically important ones.
 
 - **Generalization Risk**: A model trained on data with documentation bias may
-  perform differently when deployed in settings with better or worse documentation.
+  perform differently in settings with better or worse documentation practices.
 
-### Implications
+### Implications for ML in Healthcare
 
-- **Model Robustness**: Models should be evaluated on data with varying
-  documentation quality to understand sensitivity.
-
-- **Feature Quality Monitoring**: Track documentation completeness for key
-  predictive features, not just the target variable.
-
-- **Institutional Variation**: Documentation practices vary across providers,
-  departments, and EHR systems - models may not generalize well.
+- **Data Quality**: Feature completeness matters as much as label accuracy
+- **Institutional Variation**: Documentation practices vary - models may not generalize
+- **Monitoring**: Track documentation rates for key predictive features
+- **Robustness**: Evaluate models under varying documentation completeness
 
 ### Mitigation Strategies
 
-1. **Documentation improvement initiatives** to increase capture of metabolic conditions
-2. **Feature imputation** based on lab values when diagnoses are missing
-3. **Multi-task learning** to jointly predict both the target and missing features
-4. **Sensitivity analysis** to understand model behavior under varying documentation rates
+1. **Documentation improvement** initiatives at the clinical level
+2. **Feature imputation** based on related lab values when diagnoses are missing
+3. **Sensitivity analysis** to understand model behavior under documentation gaps
+4. **Multi-source validation** using data with different documentation practices
 
 ---
 
 ## 6. Conclusion
 
 This case study demonstrates how incomplete documentation of clinical findings
-creates biased training data that affects ML model behavior. Unlike label bias
-which directly corrupts the target, documentation bias works through features,
-reducing the apparent predictive power of under-documented conditions.
+creates biased training data that affects ML model behavior. By focusing on
+hypertriglyceridemia (a genuine risk marker rather than a defining characteristic),
+we isolate the effect of documentation bias in a clinically realistic scenario.
 
 Key takeaways:
 
-- Documentation gaps are a form of measurement error in feature values
-- Feature importance can shift away from under-documented conditions
-- Models may not generalize to settings with different documentation practices
-- Monitoring documentation completeness is essential for reliable ML deployment
+- Documentation gaps are measurement error in feature values
+- Feature importance shifts away from under-documented conditions
+- Models may not generalize across documentation practices
+- Monitoring feature completeness is essential for reliable ML deployment
 
 ---
 
@@ -493,7 +398,7 @@ Key takeaways:
 uv run python scripts/1_generate_data.py -p 20000 -s 160
 
 # 2. Apply documentation bias (30% mask rate)
-uv run python scripts/2_gen_bias.py --mask-rate 0.3
+uv run python scripts/2_gen_bias.py
 
 # 3. Train and evaluate models
 uv run python scripts/3_train_models.py

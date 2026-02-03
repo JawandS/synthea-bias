@@ -4,8 +4,8 @@
 
 This script:
 1. Loads feature matrix from data.csv (created by 2_gen_bias.py)
-2. Trains baseline model using true features (has_hyperglycemia, has_hypertriglyceridemia)
-3. Trains biased model using observed features (observed_hyperglycemia, observed_hypertriglyceridemia)
+2. Trains baseline model using true feature (has_hypertriglyceridemia)
+3. Trains biased model using observed feature (observed_hypertriglyceridemia)
 4. Both models predict the same target: has_diabetes
 5. Compares feature importance and performance differences
 6. Outputs 3_model.md with specifications and performance comparison
@@ -36,16 +36,7 @@ from sklearn.model_selection import train_test_split
 
 
 def find_optimal_threshold(y_true: np.ndarray, y_proba: np.ndarray, method: str = "f1") -> float:
-    """Find optimal classification threshold.
-
-    Args:
-        y_true: True binary labels
-        y_proba: Predicted probabilities for positive class
-        method: 'f1' to maximize F1 score, 'youden' for Youden's J statistic
-
-    Returns:
-        Optimal threshold value
-    """
+    """Find optimal classification threshold."""
     if method == "f1":
         precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
         denom = precision + recall
@@ -60,9 +51,6 @@ def find_optimal_threshold(y_true: np.ndarray, y_proba: np.ndarray, method: str 
         j_scores = tpr - fpr
         best_idx = np.argmax(j_scores)
         return thresholds[best_idx]
-    elif method == "prevalence":
-        prevalence = y_true.mean()
-        return np.percentile(y_proba, 100 * (1 - prevalence))
     else:
         return 0.5
 
@@ -77,9 +65,9 @@ INFO_DIR = OUTPUT_DIR / "info"
 # Feature columns (shared between baseline and biased models)
 SHARED_FEATURE_COLS = ["age", "male", "income", "a1c", "bmi", "smoker", "prediabetes", "obesity", "hypertension", "hyperlipidemia"]
 
-# Metabolic features (different between baseline and biased)
-BASELINE_METABOLIC_COLS = ["has_hyperglycemia", "has_hypertriglyceridemia"]
-BIASED_METABOLIC_COLS = ["observed_hyperglycemia", "observed_hypertriglyceridemia"]
+# Hypertriglyceridemia feature (different between baseline and biased)
+BASELINE_HT_COL = "has_hypertriglyceridemia"
+BIASED_HT_COL = "observed_hypertriglyceridemia"
 
 
 def load_data() -> pd.DataFrame:
@@ -142,24 +130,17 @@ def compute_subgroup_metrics(
     df_test: pd.DataFrame,
     threshold: float,
 ) -> dict:
-    """Compute metrics for diabetic subgroups based on true metabolic conditions."""
+    """Compute metrics for subgroups based on true hypertriglyceridemia status."""
     test_proba = model.predict_proba(X_test)[:, 1]
     test_pred = (test_proba >= threshold).astype(int)
 
     subgroup_metrics = {}
 
-    # Subgroups based on TRUE metabolic conditions
-    has_hg = df_test["has_hyperglycemia"] == 1
+    # Subgroups based on TRUE hypertriglyceridemia
     has_ht = df_test["has_hypertriglyceridemia"] == 1
-    has_both = has_hg & has_ht
-    has_neither = ~has_hg & ~has_ht
+    no_ht = df_test["has_hypertriglyceridemia"] == 0
 
-    for name, mask in [
-        ("with_hyperglycemia", has_hg.values),
-        ("with_hypertriglyceridemia", has_ht.values),
-        ("with_both", has_both.values),
-        ("with_neither", has_neither.values),
-    ]:
+    for name, mask in [("with_ht", has_ht.values), ("without_ht", no_ht.values)]:
         if mask.sum() > 0 and len(np.unique(y_test[mask])) > 1:
             subgroup_metrics[f"{name}_auc"] = roc_auc_score(y_test[mask], test_proba[mask])
             subgroup_metrics[f"{name}_recall"] = recall_score(y_test[mask], test_pred[mask], zero_division=0)
@@ -199,15 +180,12 @@ def write_model_report(
         return f"{diff:+.4f}"
 
     # Build feature importance table
-    all_features = SHARED_FEATURE_COLS + ["hyperglycemia", "hypertriglyceridemia"]
+    all_features = SHARED_FEATURE_COLS + ["hypertriglyceridemia"]
     importance_rows = []
     for feat in all_features:
-        if feat == "hyperglycemia":
-            base_key = "has_hyperglycemia"
-            bias_key = "observed_hyperglycemia"
-        elif feat == "hypertriglyceridemia":
-            base_key = "has_hypertriglyceridemia"
-            bias_key = "observed_hypertriglyceridemia"
+        if feat == "hypertriglyceridemia":
+            base_key = BASELINE_HT_COL
+            bias_key = BIASED_HT_COL
         else:
             base_key = feat
             bias_key = feat
@@ -246,24 +224,23 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 | Feature | Description |
 |---------|-------------|
 | age | Patient age in years |
-| male | Gender (1 = male) |
+| male | Gender indicator (1 = male) |
 | income | Household income (scaled) |
 | a1c | Hemoglobin A1c level |
 | bmi | Body mass index |
-| smoker | Current smoker (1 = yes) |
-| prediabetes | Has prediabetes diagnosis |
-| obesity | Has obesity diagnosis |
-| hypertension | Has hypertension diagnosis |
-| hyperlipidemia | Has hyperlipidemia diagnosis |
-| hyperglycemia | Has hyperglycemia (true or observed) |
-| hypertriglyceridemia | Has hypertriglyceridemia (true or observed) |
+| smoker | Current smoker indicator |
+| prediabetes | Prediabetes diagnosis |
+| obesity | Obesity diagnosis |
+| hypertension | Hypertension diagnosis |
+| hyperlipidemia | Hyperlipidemia diagnosis |
+| hypertriglyceridemia | Hypertriglyceridemia (true or observed) |
 
 ## Model Comparison
 
-| Model | Metabolic Features Used | Target |
-|-------|-------------------------|--------|
-| Baseline | `has_hyperglycemia`, `has_hypertriglyceridemia` (true) | `has_diabetes` |
-| Biased | `observed_hyperglycemia`, `observed_hypertriglyceridemia` (30% masked) | `has_diabetes` |
+| Model | Hypertriglyceridemia Feature | Target |
+|-------|------------------------------|--------|
+| Baseline | `has_hypertriglyceridemia` (true) | `has_diabetes` |
+| Biased | `observed_hypertriglyceridemia` (30% masked) | `has_diabetes` |
 
 ## Data Split
 
@@ -292,46 +269,38 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Subgroup Performance
 
-Performance on patients grouped by TRUE metabolic condition status (regardless of which model).
+Performance grouped by TRUE hypertriglyceridemia status.
 
-### Test Set Composition by Metabolic Status
+### Test Set Composition
 
 | Subgroup | Patients | Diabetes Cases | Prevalence |
 |----------|----------|----------------|------------|
-| With hyperglycemia | {baseline_subgroup['with_hyperglycemia_n']:,} | {baseline_subgroup['with_hyperglycemia_pos']:,} | {100*baseline_subgroup['with_hyperglycemia_pos']/max(baseline_subgroup['with_hyperglycemia_n'],1):.2f}% |
-| With hypertriglyceridemia | {baseline_subgroup['with_hypertriglyceridemia_n']:,} | {baseline_subgroup['with_hypertriglyceridemia_pos']:,} | {100*baseline_subgroup['with_hypertriglyceridemia_pos']/max(baseline_subgroup['with_hypertriglyceridemia_n'],1):.2f}% |
-| With both conditions | {baseline_subgroup['with_both_n']:,} | {baseline_subgroup['with_both_pos']:,} | {100*baseline_subgroup['with_both_pos']/max(baseline_subgroup['with_both_n'],1):.2f}% |
-| With neither | {baseline_subgroup['with_neither_n']:,} | {baseline_subgroup['with_neither_pos']:,} | {100*baseline_subgroup['with_neither_pos']/max(baseline_subgroup['with_neither_n'],1):.2f}% |
+| With hypertriglyceridemia | {baseline_subgroup['with_ht_n']:,} | {baseline_subgroup['with_ht_pos']:,} | {100*baseline_subgroup['with_ht_pos']/max(baseline_subgroup['with_ht_n'],1):.2f}% |
+| Without hypertriglyceridemia | {baseline_subgroup['without_ht_n']:,} | {baseline_subgroup['without_ht_pos']:,} | {100*baseline_subgroup['without_ht_pos']/max(baseline_subgroup['without_ht_n'],1):.2f}% |
 
 ### AUC-ROC by Subgroup
 
 | Subgroup | Baseline | Biased | Delta |
 |----------|----------|--------|-------|
-| With hyperglycemia | {baseline_subgroup['with_hyperglycemia_auc']:.4f} | {biased_subgroup['with_hyperglycemia_auc']:.4f} | {delta_sub('with_hyperglycemia_auc')} |
-| With hypertriglyceridemia | {baseline_subgroup['with_hypertriglyceridemia_auc']:.4f} | {biased_subgroup['with_hypertriglyceridemia_auc']:.4f} | {delta_sub('with_hypertriglyceridemia_auc')} |
-| With both | {baseline_subgroup['with_both_auc']:.4f} | {biased_subgroup['with_both_auc']:.4f} | {delta_sub('with_both_auc')} |
-| With neither | {baseline_subgroup['with_neither_auc']:.4f} | {biased_subgroup['with_neither_auc']:.4f} | {delta_sub('with_neither_auc')} |
+| With hypertriglyceridemia | {baseline_subgroup['with_ht_auc']:.4f} | {biased_subgroup['with_ht_auc']:.4f} | {delta_sub('with_ht_auc')} |
+| Without hypertriglyceridemia | {baseline_subgroup['without_ht_auc']:.4f} | {biased_subgroup['without_ht_auc']:.4f} | {delta_sub('without_ht_auc')} |
 
 ### Recall by Subgroup
 
 | Subgroup | Baseline | Biased | Delta |
 |----------|----------|--------|-------|
-| With hyperglycemia | {baseline_subgroup['with_hyperglycemia_recall']:.4f} | {biased_subgroup['with_hyperglycemia_recall']:.4f} | {delta_sub('with_hyperglycemia_recall')} |
-| With hypertriglyceridemia | {baseline_subgroup['with_hypertriglyceridemia_recall']:.4f} | {biased_subgroup['with_hypertriglyceridemia_recall']:.4f} | {delta_sub('with_hypertriglyceridemia_recall')} |
-| With both | {baseline_subgroup['with_both_recall']:.4f} | {biased_subgroup['with_both_recall']:.4f} | {delta_sub('with_both_recall')} |
-| With neither | {baseline_subgroup['with_neither_recall']:.4f} | {biased_subgroup['with_neither_recall']:.4f} | {delta_sub('with_neither_recall')} |
+| With hypertriglyceridemia | {baseline_subgroup['with_ht_recall']:.4f} | {biased_subgroup['with_ht_recall']:.4f} | {delta_sub('with_ht_recall')} |
+| Without hypertriglyceridemia | {baseline_subgroup['without_ht_recall']:.4f} | {biased_subgroup['without_ht_recall']:.4f} | {delta_sub('without_ht_recall')} |
 
 ## Key Findings
 
 - **Overall AUC change**: {delta('test_auc')} (from {baseline_metrics['test_auc']:.4f} to {biased_metrics['test_auc']:.4f})
 - **Overall F1 change**: {delta('test_f1')} (from {baseline_metrics['test_f1']:.4f} to {biased_metrics['test_f1']:.4f})
-- **Hyperglycemia importance**: {baseline_importance.get('has_hyperglycemia', 0):.4f} -> {biased_importance.get('observed_hyperglycemia', 0):.4f}
-- **Hypertriglyceridemia importance**: {baseline_importance.get('has_hypertriglyceridemia', 0):.4f} -> {biased_importance.get('observed_hypertriglyceridemia', 0):.4f}
+- **Hypertriglyceridemia importance**: {baseline_importance.get(BASELINE_HT_COL, 0):.4f} -> {biased_importance.get(BIASED_HT_COL, 0):.4f} ({biased_importance.get(BIASED_HT_COL, 0) - baseline_importance.get(BASELINE_HT_COL, 0):+.4f})
 
-> **Documentation bias effect**: When metabolic conditions are under-documented, the model learns
-> weaker associations between these conditions and diabetes. This may cause the model to rely more
-> heavily on other features (like A1c or demographics), potentially changing its behavior on
-> populations where documentation practices differ.
+> **Documentation bias effect**: When hypertriglyceridemia is under-documented, the model learns
+> a weaker association between this condition and diabetes. The model may compensate by relying
+> more heavily on other features like A1c, BMI, or other comorbidities.
 """
 
     md_path.write_text(content)
@@ -354,7 +323,7 @@ def main():
     df = load_data()
 
     # Check required columns
-    required_cols = SHARED_FEATURE_COLS + BASELINE_METABOLIC_COLS + BIASED_METABOLIC_COLS + ["has_diabetes"]
+    required_cols = SHARED_FEATURE_COLS + [BASELINE_HT_COL, BIASED_HT_COL, "has_diabetes"]
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         print(f"Error: Missing columns: {missing}")
@@ -362,8 +331,8 @@ def main():
         return
 
     # Build feature matrices
-    baseline_feature_cols = SHARED_FEATURE_COLS + BASELINE_METABOLIC_COLS
-    biased_feature_cols = SHARED_FEATURE_COLS + BIASED_METABOLIC_COLS
+    baseline_feature_cols = SHARED_FEATURE_COLS + [BASELINE_HT_COL]
+    biased_feature_cols = SHARED_FEATURE_COLS + [BIASED_HT_COL]
 
     X_baseline = df[baseline_feature_cols].to_numpy()
     X_biased = df[biased_feature_cols].to_numpy()
@@ -417,8 +386,8 @@ def main():
 
     threshold_method = "f1"
 
-    # Train baseline model (true metabolic features)
-    print("\nTraining baseline model (true features)...")
+    # Train baseline model (true hypertriglyceridemia feature)
+    print("\nTraining baseline model (true feature)...")
     baseline_model, baseline_metrics, baseline_threshold = train_and_evaluate(
         X_baseline_train, y_train, X_baseline_val, y_val, X_baseline_test, y_test, model_params, threshold_method
     )
@@ -428,8 +397,8 @@ def main():
     print(f"  Optimal threshold: {baseline_threshold:.4f}")
     print(f"  Test F1: {baseline_metrics['test_f1']:.4f}")
 
-    # Train biased model (observed metabolic features)
-    print("\nTraining biased model (observed features)...")
+    # Train biased model (observed hypertriglyceridemia feature)
+    print("\nTraining biased model (observed feature)...")
     biased_model, biased_metrics, biased_threshold = train_and_evaluate(
         X_biased_train, y_train, X_biased_val, y_val, X_biased_test, y_test, model_params, threshold_method
     )
@@ -467,13 +436,13 @@ def main():
     print(f"  Biased AUC:   {biased_metrics['test_auc']:.4f}")
     print(f"  Delta:        {biased_metrics['test_auc'] - baseline_metrics['test_auc']:+.4f}")
 
-    print(f"\nFeature Importance (metabolic conditions):")
-    print(f"  Hyperglycemia:       {baseline_importance.get('has_hyperglycemia', 0):.4f} -> {biased_importance.get('observed_hyperglycemia', 0):.4f}")
-    print(f"  Hypertriglyceridemia: {baseline_importance.get('has_hypertriglyceridemia', 0):.4f} -> {biased_importance.get('observed_hypertriglyceridemia', 0):.4f}")
+    print(f"\nHypertriglyceridemia Feature Importance:")
+    print(f"  Baseline: {baseline_importance.get(BASELINE_HT_COL, 0):.4f}")
+    print(f"  Biased:   {biased_importance.get(BIASED_HT_COL, 0):.4f}")
 
-    print(f"\nRecall on patients with hyperglycemia:")
-    print(f"  Baseline: {baseline_subgroup['with_hyperglycemia_recall']:.4f}")
-    print(f"  Biased:   {biased_subgroup['with_hyperglycemia_recall']:.4f}")
+    print(f"\nRecall on patients WITH hypertriglyceridemia:")
+    print(f"  Baseline: {baseline_subgroup['with_ht_recall']:.4f}")
+    print(f"  Biased:   {biased_subgroup['with_ht_recall']:.4f}")
 
     print("\n" + "=" * 60)
     print(f"Complete! See {INFO_DIR / '3_model.md'}")

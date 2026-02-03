@@ -5,8 +5,7 @@
 This script:
 1. Loads raw Synthea output (patients.csv, conditions.csv, observations.csv)
 2. Builds feature matrix with age, gender, BMI, A1c, comorbidities, etc.
-3. Adds condition flags and masks hyperglycemia/hypertriglyceridemia to simulate
-   documentation bias (random under-recording of metabolic conditions)
+3. Adds hypertriglyceridemia flag and masks a portion to simulate documentation bias
 4. Outputs single data.csv with all features needed for modeling
 5. Deletes source CSV files to save space
 6. Outputs 2_bias_effect.md with before/after prevalence statistics
@@ -34,7 +33,6 @@ INFO_DIR = OUTPUT_DIR / "info"
 # Condition codes
 DIABETES_CODE = "44054006"
 PREDIABETES_CODE = "714628002"
-HYPERGLYCEMIA_CODE = "80394007"
 HYPERTRIGLYCERIDEMIA_CODE = "302870006"
 OBESITY_CODE = "162864005"
 HYPERTENSION_CODE = "59621000"
@@ -72,7 +70,7 @@ def build_features(
     df["male"] = (patients["GENDER"] == "M").astype(int)
 
     # Income (normalized)
-    df["income"] = patients["INCOME"] / 100000  # Scale to ~0-2 range
+    df["income"] = patients["INCOME"] / 100000
 
     # Conditions - check if patient has each condition
     codes = conditions["CODE"].astype(str)
@@ -81,10 +79,7 @@ def build_features(
     diabetes_patients = set(conditions[codes == DIABETES_CODE]["PATIENT"].unique())
     df["has_diabetes"] = patients["Id"].isin(diabetes_patients).astype(int)
 
-    # Key metabolic conditions (these will be masked)
-    hyperglycemia_patients = set(conditions[codes == HYPERGLYCEMIA_CODE]["PATIENT"].unique())
-    df["has_hyperglycemia"] = patients["Id"].isin(hyperglycemia_patients).astype(int)
-
+    # Key metabolic condition (this will be masked)
     hypertriglyceridemia_patients = set(conditions[codes == HYPERTRIGLYCERIDEMIA_CODE]["PATIENT"].unique())
     df["has_hypertriglyceridemia"] = patients["Id"].isin(hypertriglyceridemia_patients).astype(int)
 
@@ -105,7 +100,6 @@ def build_features(
         a1c_latest = a1c_obs.sort_values("DATE").groupby("PATIENT").last()["VALUE"]
         df["a1c"] = patients["Id"].map(a1c_latest)
         df["a1c"] = pd.to_numeric(df["a1c"], errors="coerce")
-        # Fill missing with normal value (5.7 is upper bound of normal)
         df["a1c"] = df["a1c"].fillna(5.4)
     else:
         df["a1c"] = 5.4
@@ -133,31 +127,22 @@ def build_features(
     return df
 
 
-def add_mask_flags(df: pd.DataFrame, mask_rate: float, seed: int) -> pd.DataFrame:
-    """Add mask flags for hyperglycemia and hypertriglyceridemia to simulate documentation bias."""
+def add_mask_flag(df: pd.DataFrame, mask_rate: float, seed: int) -> pd.DataFrame:
+    """Add mask flag for hypertriglyceridemia to simulate documentation bias."""
     df = df.copy()
     rng = np.random.default_rng(seed)
 
-    # Initialize mask columns
-    df["mask_hyperglycemia"] = 0
+    # Initialize mask column
     df["mask_hypertriglyceridemia"] = 0
 
-    # Mask hyperglycemia (random subset of patients with hyperglycemia)
-    hyperglycemia_indices = df[df["has_hyperglycemia"] == 1].index
-    n_to_mask_hg = int(len(hyperglycemia_indices) * mask_rate)
-    if n_to_mask_hg > 0:
-        masked_hg = rng.choice(hyperglycemia_indices, size=n_to_mask_hg, replace=False)
-        df.loc[masked_hg, "mask_hyperglycemia"] = 1
+    # Mask hypertriglyceridemia (random subset of patients with the condition)
+    ht_indices = df[df["has_hypertriglyceridemia"] == 1].index
+    n_to_mask = int(len(ht_indices) * mask_rate)
+    if n_to_mask > 0:
+        masked_indices = rng.choice(ht_indices, size=n_to_mask, replace=False)
+        df.loc[masked_indices, "mask_hypertriglyceridemia"] = 1
 
-    # Mask hypertriglyceridemia (random subset of patients with hypertriglyceridemia)
-    hypertriglyceridemia_indices = df[df["has_hypertriglyceridemia"] == 1].index
-    n_to_mask_ht = int(len(hypertriglyceridemia_indices) * mask_rate)
-    if n_to_mask_ht > 0:
-        masked_ht = rng.choice(hypertriglyceridemia_indices, size=n_to_mask_ht, replace=False)
-        df.loc[masked_ht, "mask_hypertriglyceridemia"] = 1
-
-    # Add observed (biased) features
-    df["observed_hyperglycemia"] = ((df["has_hyperglycemia"] == 1) & (df["mask_hyperglycemia"] == 0)).astype(int)
+    # Add observed (biased) feature
     df["observed_hypertriglyceridemia"] = ((df["has_hypertriglyceridemia"] == 1) & (df["mask_hypertriglyceridemia"] == 0)).astype(int)
 
     return df
@@ -167,17 +152,14 @@ def compute_prevalence_stats(df: pd.DataFrame, use_masked: bool = False) -> dict
     """Compute prevalence statistics."""
     n_total = len(df)
 
-    # Determine effective feature status
+    # Determine effective hypertriglyceridemia status
     if use_masked:
-        effective_hyperglycemia = df["observed_hyperglycemia"]
-        effective_hypertriglyceridemia = df["observed_hypertriglyceridemia"]
+        effective_ht = df["observed_hypertriglyceridemia"]
     else:
-        effective_hyperglycemia = df["has_hyperglycemia"]
-        effective_hypertriglyceridemia = df["has_hypertriglyceridemia"]
+        effective_ht = df["has_hypertriglyceridemia"]
 
     n_diabetes = df["has_diabetes"].sum()
-    n_hyperglycemia = effective_hyperglycemia.sum()
-    n_hypertriglyceridemia = effective_hypertriglyceridemia.sum()
+    n_ht = effective_ht.sum()
 
     # Age decades
     decade = pd.cut(
@@ -190,24 +172,19 @@ def compute_prevalence_stats(df: pd.DataFrame, use_masked: bool = False) -> dict
         "n_total": n_total,
         "n_diabetes": int(n_diabetes),
         "pct_diabetes": 100 * n_diabetes / n_total if n_total else 0,
-        "n_hyperglycemia": int(n_hyperglycemia),
-        "pct_hyperglycemia": 100 * n_hyperglycemia / n_total if n_total else 0,
-        "n_hypertriglyceridemia": int(n_hypertriglyceridemia),
-        "pct_hypertriglyceridemia": 100 * n_hypertriglyceridemia / n_total if n_total else 0,
+        "n_hypertriglyceridemia": int(n_ht),
+        "pct_hypertriglyceridemia": 100 * n_ht / n_total if n_total else 0,
     }
 
     # By gender
     for gender_name, gender_val in [("male", 1), ("female", 0)]:
         subset_mask = df["male"] == gender_val
         n = subset_mask.sum()
-        n_hg = effective_hyperglycemia[subset_mask].sum()
-        n_ht = effective_hypertriglyceridemia[subset_mask].sum()
+        n_ht_g = effective_ht[subset_mask].sum()
         n_diab = df.loc[subset_mask, "has_diabetes"].sum()
         stats[f"n_{gender_name}"] = int(n)
-        stats[f"n_hyperglycemia_{gender_name}"] = int(n_hg)
-        stats[f"pct_hyperglycemia_{gender_name}"] = 100 * n_hg / n if n else 0
-        stats[f"n_hypertriglyceridemia_{gender_name}"] = int(n_ht)
-        stats[f"pct_hypertriglyceridemia_{gender_name}"] = 100 * n_ht / n if n else 0
+        stats[f"n_hypertriglyceridemia_{gender_name}"] = int(n_ht_g)
+        stats[f"pct_hypertriglyceridemia_{gender_name}"] = 100 * n_ht_g / n if n else 0
         stats[f"n_diabetes_{gender_name}"] = int(n_diab)
         stats[f"pct_diabetes_{gender_name}"] = 100 * n_diab / n if n else 0
 
@@ -216,16 +193,13 @@ def compute_prevalence_stats(df: pd.DataFrame, use_masked: bool = False) -> dict
     for dec in ["40-49", "50-59", "60-69", "70-79", "80-89", "90+"]:
         subset_mask = decade == dec
         n = subset_mask.sum()
-        n_hg = effective_hyperglycemia[subset_mask].sum()
-        n_ht = effective_hypertriglyceridemia[subset_mask].sum()
+        n_ht_d = effective_ht[subset_mask].sum()
         n_diab = df.loc[subset_mask, "has_diabetes"].sum()
         decade_stats.append({
             "decade": dec,
             "n": int(n),
-            "n_hyperglycemia": int(n_hg),
-            "pct_hyperglycemia": 100 * n_hg / n if n else 0,
-            "n_hypertriglyceridemia": int(n_ht),
-            "pct_hypertriglyceridemia": 100 * n_ht / n if n else 0,
+            "n_hypertriglyceridemia": int(n_ht_d),
+            "pct_hypertriglyceridemia": 100 * n_ht_d / n if n else 0,
             "n_diabetes": int(n_diab),
             "pct_diabetes": 100 * n_diab / n if n else 0,
         })
@@ -233,10 +207,7 @@ def compute_prevalence_stats(df: pd.DataFrame, use_masked: bool = False) -> dict
 
     # Co-occurrence with diabetes
     diabetes_mask = df["has_diabetes"] == 1
-    n_diabetes_with_hg = (diabetes_mask & (effective_hyperglycemia == 1)).sum()
-    n_diabetes_with_ht = (diabetes_mask & (effective_hypertriglyceridemia == 1)).sum()
-    stats["n_diabetes_with_hyperglycemia"] = int(n_diabetes_with_hg)
-    stats["pct_diabetes_with_hyperglycemia"] = 100 * n_diabetes_with_hg / n_diabetes if n_diabetes else 0
+    n_diabetes_with_ht = (diabetes_mask & (effective_ht == 1)).sum()
     stats["n_diabetes_with_hypertriglyceridemia"] = int(n_diabetes_with_ht)
     stats["pct_diabetes_with_hypertriglyceridemia"] = 100 * n_diabetes_with_ht / n_diabetes if n_diabetes else 0
 
@@ -254,19 +225,15 @@ def write_bias_effect_report(
     md_path = INFO_DIR / "2_bias_effect.md"
 
     # Masking summary
-    n_hyperglycemia = df["has_hyperglycemia"].sum()
-    n_hypertriglyceridemia = df["has_hypertriglyceridemia"].sum()
-    n_masked_hg = df["mask_hyperglycemia"].sum()
-    n_masked_ht = df["mask_hypertriglyceridemia"].sum()
+    n_ht = df["has_hypertriglyceridemia"].sum()
+    n_masked = df["mask_hypertriglyceridemia"].sum()
 
     # Decade comparison table
     decade_rows = []
     for b_dec, a_dec in zip(before_stats["decade_stats"], after_stats["decade_stats"]):
-        diff_hg = a_dec["pct_hyperglycemia"] - b_dec["pct_hyperglycemia"]
-        diff_ht = a_dec["pct_hypertriglyceridemia"] - b_dec["pct_hypertriglyceridemia"]
+        diff = a_dec["pct_hypertriglyceridemia"] - b_dec["pct_hypertriglyceridemia"]
         decade_rows.append(
-            f"| {b_dec['decade']} | {b_dec['pct_hyperglycemia']:.2f}% | {a_dec['pct_hyperglycemia']:.2f}% | {diff_hg:+.2f}% | "
-            f"{b_dec['pct_hypertriglyceridemia']:.2f}% | {a_dec['pct_hypertriglyceridemia']:.2f}% | {diff_ht:+.2f}% |"
+            f"| {b_dec['decade']} | {b_dec['pct_hypertriglyceridemia']:.2f}% | {a_dec['pct_hypertriglyceridemia']:.2f}% | {diff:+.2f}% |"
         )
     decade_table = "\n".join(decade_rows)
 
@@ -283,46 +250,45 @@ Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Masking Summary
 
-| Condition | Total Cases | Masked | Actual Mask Rate |
-|-----------|-------------|--------|------------------|
-| Hyperglycemia | {n_hyperglycemia:,} | {n_masked_hg:,} | {100 * n_masked_hg / n_hyperglycemia:.1f}% |
-| Hypertriglyceridemia | {n_hypertriglyceridemia:,} | {n_masked_ht:,} | {100 * n_masked_ht / n_hypertriglyceridemia:.1f}% |
+| Metric | Value |
+|--------|-------|
+| Patients with hypertriglyceridemia | {n_ht:,} |
+| Patients masked | {n_masked:,} |
+| Actual mask rate | {100 * n_masked / n_ht:.1f}% |
 
 ## Overall Effect
 
-| Condition | Before (True) | After (Observed) | Change |
-|-----------|---------------|------------------|--------|
-| Hyperglycemia | {before_stats['n_hyperglycemia']:,} ({before_stats['pct_hyperglycemia']:.2f}%) | {after_stats['n_hyperglycemia']:,} ({after_stats['pct_hyperglycemia']:.2f}%) | {after_stats['n_hyperglycemia'] - before_stats['n_hyperglycemia']:+,} |
-| Hypertriglyceridemia | {before_stats['n_hypertriglyceridemia']:,} ({before_stats['pct_hypertriglyceridemia']:.2f}%) | {after_stats['n_hypertriglyceridemia']:,} ({after_stats['pct_hypertriglyceridemia']:.2f}%) | {after_stats['n_hypertriglyceridemia'] - before_stats['n_hypertriglyceridemia']:+,} |
+| Metric | Before (True) | After (Observed) | Change |
+|--------|---------------|------------------|--------|
+| Hypertriglyceridemia cases | {before_stats['n_hypertriglyceridemia']:,} | {after_stats['n_hypertriglyceridemia']:,} | {after_stats['n_hypertriglyceridemia'] - before_stats['n_hypertriglyceridemia']:+,} |
+| Prevalence | {before_stats['pct_hypertriglyceridemia']:.2f}% | {after_stats['pct_hypertriglyceridemia']:.2f}% | {after_stats['pct_hypertriglyceridemia'] - before_stats['pct_hypertriglyceridemia']:+.2f}% |
 
 ## Effect on Diabetes Association
 
-These conditions are highly predictive of diabetes. Masking them affects the apparent association.
+Hypertriglyceridemia is a risk marker for diabetes. Masking it affects the apparent association.
 
 | Metric | Before (True) | After (Observed) | Change |
 |--------|---------------|------------------|--------|
-| Diabetics with hyperglycemia | {before_stats['n_diabetes_with_hyperglycemia']:,} ({before_stats['pct_diabetes_with_hyperglycemia']:.2f}%) | {after_stats['n_diabetes_with_hyperglycemia']:,} ({after_stats['pct_diabetes_with_hyperglycemia']:.2f}%) | {after_stats['pct_diabetes_with_hyperglycemia'] - before_stats['pct_diabetes_with_hyperglycemia']:+.2f}% |
-| Diabetics with hypertriglyceridemia | {before_stats['n_diabetes_with_hypertriglyceridemia']:,} ({before_stats['pct_diabetes_with_hypertriglyceridemia']:.2f}%) | {after_stats['n_diabetes_with_hypertriglyceridemia']:,} ({after_stats['pct_diabetes_with_hypertriglyceridemia']:.2f}%) | {after_stats['pct_diabetes_with_hypertriglyceridemia'] - before_stats['pct_diabetes_with_hypertriglyceridemia']:+.2f}% |
+| Diabetics with hypertriglyceridemia | {before_stats['n_diabetes_with_hypertriglyceridemia']:,} ({before_stats['pct_diabetes_with_hypertriglyceridemia']:.1f}%) | {after_stats['n_diabetes_with_hypertriglyceridemia']:,} ({after_stats['pct_diabetes_with_hypertriglyceridemia']:.1f}%) | {after_stats['pct_diabetes_with_hypertriglyceridemia'] - before_stats['pct_diabetes_with_hypertriglyceridemia']:+.1f}% |
 
 ## Prevalence by Gender
 
-| Gender | Hyperglycemia Before | After | Change | Hypertriglyceridemia Before | After | Change |
-|--------|---------------------|-------|--------|---------------------------|-------|--------|
-| Male | {before_stats['pct_hyperglycemia_male']:.2f}% | {after_stats['pct_hyperglycemia_male']:.2f}% | {after_stats['pct_hyperglycemia_male'] - before_stats['pct_hyperglycemia_male']:+.2f}% | {before_stats['pct_hypertriglyceridemia_male']:.2f}% | {after_stats['pct_hypertriglyceridemia_male']:.2f}% | {after_stats['pct_hypertriglyceridemia_male'] - before_stats['pct_hypertriglyceridemia_male']:+.2f}% |
-| Female | {before_stats['pct_hyperglycemia_female']:.2f}% | {after_stats['pct_hyperglycemia_female']:.2f}% | {after_stats['pct_hyperglycemia_female'] - before_stats['pct_hyperglycemia_female']:+.2f}% | {before_stats['pct_hypertriglyceridemia_female']:.2f}% | {after_stats['pct_hypertriglyceridemia_female']:.2f}% | {after_stats['pct_hypertriglyceridemia_female'] - before_stats['pct_hypertriglyceridemia_female']:+.2f}% |
+| Gender | Before | After | Change |
+|--------|--------|-------|--------|
+| Male | {before_stats['pct_hypertriglyceridemia_male']:.2f}% | {after_stats['pct_hypertriglyceridemia_male']:.2f}% | {after_stats['pct_hypertriglyceridemia_male'] - before_stats['pct_hypertriglyceridemia_male']:+.2f}% |
+| Female | {before_stats['pct_hypertriglyceridemia_female']:.2f}% | {after_stats['pct_hypertriglyceridemia_female']:.2f}% | {after_stats['pct_hypertriglyceridemia_female'] - before_stats['pct_hypertriglyceridemia_female']:+.2f}% |
 
 ## Prevalence by Age Decade
 
-| Decade | HG Before | HG After | HG Change | HT Before | HT After | HT Change |
-|--------|-----------|----------|-----------|-----------|----------|-----------|
+| Decade | Before | After | Change |
+|--------|--------|-------|--------|
 {decade_table}
 
 ## Key Observations
 
-- **Documentation bias is random**: Unlike demographic-based underdiagnosis, this bias affects all patient groups equally
-- **Hyperglycemia**: {before_stats['pct_hyperglycemia']:.2f}% true -> {after_stats['pct_hyperglycemia']:.2f}% observed ({mask_rate:.0%} masked)
-- **Hypertriglyceridemia**: {before_stats['pct_hypertriglyceridemia']:.2f}% true -> {after_stats['pct_hypertriglyceridemia']:.2f}% observed ({mask_rate:.0%} masked)
-- **Impact on modeling**: Models trained on observed data will underestimate the predictive power of these metabolic conditions for diabetes
+- **Documentation bias is random**: This bias affects all patient groups equally (no demographic targeting)
+- **Hypertriglyceridemia prevalence**: {before_stats['pct_hypertriglyceridemia']:.2f}% true -> {after_stats['pct_hypertriglyceridemia']:.2f}% observed
+- **Impact on modeling**: Models trained on observed data will learn a weaker association between hypertriglyceridemia and diabetes
 """
 
     md_path.write_text(content)
@@ -331,7 +297,7 @@ These conditions are highly predictive of diabetes. Masking them affects the app
 
 def main():
     parser = argparse.ArgumentParser(description="Build features and generate biased dataset")
-    parser.add_argument("--mask-rate", "-m", type=float, default=0.3, help="Fraction of conditions to mask (default: 0.3)")
+    parser.add_argument("--mask-rate", "-m", type=float, default=0.3, help="Fraction of hypertriglyceridemia to mask (default: 0.3)")
     parser.add_argument("--seed", "-s", type=int, default=42, help="Random seed (default: 42)")
     args = parser.parse_args()
 
@@ -349,18 +315,15 @@ def main():
     # Build features
     print("\nBuilding feature matrix...")
     df = build_features(patients, conditions, observations)
-    print(f"  Features: age, male, income, a1c, bmi, smoker, obesity, hypertension, hyperlipidemia")
+    print(f"  Features: age, male, income, a1c, bmi, smoker, prediabetes, obesity, hypertension, hyperlipidemia, hypertriglyceridemia")
     print(f"  Target (diabetes): {df['has_diabetes'].sum():,} ({100*df['has_diabetes'].mean():.2f}%)")
-    print(f"  Hyperglycemia: {df['has_hyperglycemia'].sum():,} ({100*df['has_hyperglycemia'].mean():.2f}%)")
     print(f"  Hypertriglyceridemia: {df['has_hypertriglyceridemia'].sum():,} ({100*df['has_hypertriglyceridemia'].mean():.2f}%)")
 
-    # Add mask flags
+    # Add mask flag
     print(f"\nApplying {args.mask_rate:.0%} documentation bias...")
-    df = add_mask_flags(df, args.mask_rate, args.seed)
-    n_masked_hg = df["mask_hyperglycemia"].sum()
-    n_masked_ht = df["mask_hypertriglyceridemia"].sum()
-    print(f"  Hyperglycemia masked: {n_masked_hg:,}")
-    print(f"  Hypertriglyceridemia masked: {n_masked_ht:,}")
+    df = add_mask_flag(df, args.mask_rate, args.seed)
+    n_masked = df["mask_hypertriglyceridemia"].sum()
+    print(f"  Hypertriglyceridemia masked: {n_masked:,}")
 
     # Compute before/after stats
     print("\nComputing prevalence statistics...")
@@ -388,12 +351,12 @@ def main():
     print("Summary")
     print("=" * 60)
     print(f"\nDiabetes prevalence: {before_stats['pct_diabetes']:.2f}%")
-    print(f"\nHyperglycemia:")
-    print(f"  True:     {before_stats['pct_hyperglycemia']:.2f}%")
-    print(f"  Observed: {after_stats['pct_hyperglycemia']:.2f}%")
     print(f"\nHypertriglyceridemia:")
     print(f"  True:     {before_stats['pct_hypertriglyceridemia']:.2f}%")
     print(f"  Observed: {after_stats['pct_hypertriglyceridemia']:.2f}%")
+    print(f"\nDiabetics with hypertriglyceridemia:")
+    print(f"  True:     {before_stats['pct_diabetes_with_hypertriglyceridemia']:.1f}%")
+    print(f"  Observed: {after_stats['pct_diabetes_with_hypertriglyceridemia']:.1f}%")
 
     print("\n" + "=" * 60)
     print(f"Complete! Output: {output_path}")

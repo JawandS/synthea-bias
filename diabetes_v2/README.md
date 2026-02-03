@@ -1,6 +1,6 @@
-# Diabetes Case Study v2: Label Masking Bias
+# Diabetes Case Study v2: Documentation Bias
 
-Demonstrates how documentation bias in metabolic conditions affects ML model performance. Generates a baseline population via Synthea (Montana, ages 40-100), then masks a portion of hyperglycemia/hypertriglyceridemia diagnoses to simulate under-documentation.
+Demonstrates how documentation bias affects ML model performance. Generates a baseline population via Synthea (Montana, ages 40-100), then masks a portion of hypertriglyceridemia diagnoses to simulate under-documentation of this metabolic risk factor.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@ Demonstrates how documentation bias in metabolic conditions affects ML model per
 # 1. Generate baseline data (~20k patients)
 uv run python scripts/1_generate_data.py -p 20000 -s 160
 
-# 2. Apply bias (30% of hyperglycemia/hypertriglyceridemia masked)
+# 2. Apply bias (30% of hypertriglyceridemia masked)
 uv run python scripts/2_gen_bias.py
 
 # 3. Train and evaluate models
@@ -35,24 +35,21 @@ output/
 
 ## Canonical Condition Flags
 
-After running `2_gen_bias.py`, `patients.csv` contains:
+After running `2_gen_bias.py`, `data.csv` contains:
 
 | Column | Description |
 |--------|-------------|
 | `has_diabetes` | **Target** - patient has diabetes diagnosis (SNOMED 44054006) |
-| `has_hyperglycemia` | **True label** - patient has hyperglycemia (SNOMED 80394007) |
-| `has_hypertriglyceridemia` | **True label** - patient has hypertriglyceridemia (SNOMED 302870006) |
-| `mask_hyperglycemia` | Whether hyperglycemia is masked (under-documented) |
+| `has_hypertriglyceridemia` | **True feature** - patient has hypertriglyceridemia (SNOMED 302870006) |
 | `mask_hypertriglyceridemia` | Whether hypertriglyceridemia is masked (under-documented) |
-
-**For modeling**: Use `has_hyperglycemia & ~mask_hyperglycemia` as the observed/biased feature.
+| `observed_hypertriglyceridemia` | Biased feature for modeling (`has & ~mask`) |
 
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
 | `1_generate_data.py` | Run Synthea (Montana), extract relevant CSVs, output summary stats |
-| `2_gen_bias.py` | Add condition flags and mask columns for documentation bias |
+| `2_gen_bias.py` | Add condition flags and mask column for documentation bias |
 | `3_train_models.py` | Train/evaluate GBDT models on true vs biased features |
 | `4_create_report.py` | Generate comprehensive `report.md` case study |
 
@@ -61,7 +58,12 @@ After running `2_gen_bias.py`, `patients.csv` contains:
 | Condition | Code |
 |-----------|------|
 | Diabetes mellitus type 2 | SNOMED 44054006 |
-| Hyperglycemia | SNOMED 80394007 |
 | Hypertriglyceridemia | SNOMED 302870006 |
 | Hemoglobin A1c | LOINC 4548-4 |
 | BMI | LOINC 39156-5 |
+
+## Clinical Context
+
+Hypertriglyceridemia (elevated triglycerides) is part of metabolic syndrome and a genuine risk marker for diabetes. Unlike hyperglycemia (which is definitionally diabetes), hypertriglyceridemia is a distinct condition that signals metabolic dysfunction and often co-occurs with or precedes diabetes.
+
+Documentation bias scenario: Labs may show elevated triglycerides, but the formal diagnosis code isn't entered due to time pressure, documentation practices, or focus on the primary diagnosis.
