@@ -9,7 +9,7 @@ Demonstrates how documentation bias in metabolic conditions affects ML model per
 uv run python scripts/1_generate_data.py -p 20000 -s 160
 
 # 2. Apply bias (30% of hyperglycemia/hypertriglyceridemia masked)
-uv run python scripts/2_gen_bias.py --mask-rate 0.3
+uv run python scripts/2_gen_bias.py
 
 # 3. Train and evaluate models
 uv run python scripts/3_train_models.py
