@@ -1,252 +1,109 @@
-# AGENTS.md
+# CLAUDE.md
 
-Guidance for Codex (OpenAI coding agents) when working in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-Synthea is a Synthetic Patient Population Simulator that generates realistic (but not real) patient data and associated health records. It simulates patients from birth to death with realistic medical histories, encounters, conditions, medications, and more.
+This repository combines **Synthea** (a synthetic patient population simulator in Java) with **Python case studies** demonstrating various forms of bias in healthcare datasets and ML models. The project generates realistic patient data, then applies bias masking to study how underdiagnosis and documentation bias affect model performance.
 
-**Requirements**: Java JDK 11 or newer (LTS versions 11 or 17 recommended)
+**Requirements**: Java JDK 11 or 17 (LTS), Python 3.11+, uv (for Python dependency management)
 
-## Agent Notes (Codex)
+## Repository Structure
 
-- Keep responses concise and reference file paths (avoid pasting large files).
-- Use the `./gradlew` commands below for build/test; prefer repo scripts (`run_synthea`, `run_flexporter`) over ad-hoc java runs.
-- Avoid editing generated artifacts under `output/`; source modules live in `src/main/resources/modules/`.
-- For module flow clarity, run `./gradlew graphviz` to render state machine diagrams when needed.
-- Determinism matters: use person-specific RNG (`person.rand()`) instead of `Math.random()` when touching code.
-
-## Build and Test Commands
-
-### Building
-```bash
-# Build the project
-./gradlew build
-
-# Build and run all checks and tests
-./gradlew build check test
-
-# Clean build artifacts
-./gradlew clean
-
-# Create standalone JAR with dependencies
-./gradlew shadowJar
+```
+synthea-bias/
+├── synthea/                # Core Synthea simulator (Java/Gradle)
+├── diabetes_v2/            # Documentation bias case study (Python)
+├── sleep_apnea_v2/         # Rural underdiagnosis bias case study (Python)
+├── flag_urban/             # Urban/rural classification helper
+└── age_income/             # Age/income bias exploration (in development)
 ```
 
-### Testing
+## Build and Run Commands
+
+### Synthea (Java) - run from `synthea/` directory
+
 ```bash
-# Run all tests
-./gradlew test
+./gradlew build              # Build the project
+./gradlew test               # Run all tests
+./gradlew test --tests "org.mitre.synthea.engine.ModuleTest"  # Specific test class
+./gradlew check              # Tests + checkstyle + coverage
+./gradlew graphviz           # Generate module state diagrams
 
-# Run a specific test class
-./gradlew test --tests "org.mitre.synthea.engine.ModuleTest"
-
-# Run a specific test method
-./gradlew test --tests "org.mitre.synthea.engine.ModuleTest.testSpecificMethod"
-
-# Run tests with code coverage
-./gradlew test jacocoTestReport
+./run_synthea                            # Generate 1 patient
+./run_synthea -p 1000 -s 42 Montana      # 1000 patients, seed 42, Montana
+./run_synthea -g M -a 60-65              # Males aged 60-65
+./run_synthea --exporter.csv.export=true # Override config via CLI
 ```
 
-### Code Quality
+### Case Studies (Python) - run from case study directory
+
 ```bash
-# Run checkstyle
-./gradlew checkstyle
+# Sleep apnea v2 (rural underdiagnosis)
+cd sleep_apnea_v2
+uv run python scripts/1_generate_data.py -p 11000 -s 42
+uv run python scripts/2_gen_bias.py --mask-rate 0.3
+uv run python scripts/3_train_models.py
+uv run python scripts/4_create_report.py
 
-# Run all verification tasks (tests + checkstyle + jacoco)
-./gradlew check
-```
-
-### Generating Patients
-```bash
-# Generate a single patient
-./run_synthea
-
-# Generate specific population
-./run_synthea -p 1000                    # 1000 patients
-./run_synthea -s 12345                   # with specific seed
-./run_synthea Massachusetts              # in Massachusetts
-./run_synthea Alaska Juneau              # in Juneau, Alaska
-./run_synthea -g M -a 60-65              # males aged 60-65
-
-# Override config settings via command line
-./run_synthea -p 10 --exporter.fhir.export=true
-./run_synthea --exporter.baseDirectory="./output_tx/" Texas
-```
-
-### Utility Tasks
-```bash
-# Generate GraphViz visualizations of modules
-./gradlew graphviz
-
-# Generate list of simulated concepts
-./gradlew concepts
-
-# Generate list of patient attributes
-./gradlew attributes
-
-# Test physiology simulation
-./gradlew physiology
+# Diabetes v2 (documentation bias)
+cd diabetes_v2
+uv run python scripts/1_generate_data.py -p 20000 -s 160
+uv run python scripts/2_gen_bias.py
+uv run python scripts/3_train_models.py
+uv run python scripts/4_create_report.py
 ```
 
 ## Architecture
 
-### Core Patient Generation Flow
+### Synthea Core (Java)
 
-1. **Generator** (`org.mitre.synthea.engine.Generator`): Main orchestrator that creates populations
-   - Manages threading and parallel generation
-   - Configurable via `GeneratorOptions`
-   - Processes patients through timesteps (default: 7 days = 604800000ms)
+**Patient Generation Flow**: `Generator` → `Person` → `Modules` → `Exporter`
 
-2. **Person** (`org.mitre.synthea.world.agents.Person`): Represents a simulated patient
-   - Stores demographics, vital signs, and health history
-   - Contains `HealthRecord` with all medical events
-   - Implements `RandomNumberGenerator` for deterministic randomness per person
+- **Generator** (`org.mitre.synthea.engine.Generator`): Orchestrates population creation with threading
+- **Person** (`org.mitre.synthea.world.agents.Person`): Patient with demographics, health record, deterministic RNG
+- **Modules**: JSON state machines in `src/main/resources/modules/` define disease progression
+- **Exporters** (`org.mitre.synthea.export.*`): FHIR R4/STU3/DSTU2, C-CDA, CSV
 
-3. **Module System**: Two types of modules drive patient simulation:
-   - **Java Modules**: Hard-coded modules like `LifecycleModule`, `EncounterModule`, `CardiovascularDiseaseModule`
-   - **Generic Modules**: JSON-based state machines in `src/main/resources/modules/`
-     - Define disease progression as state transitions
-     - Use logic conditions, delays, and transitions
-     - Modular and composable (supports submodules)
+**Key Directories**:
+- `src/main/resources/modules/` - 106 JSON disease modules
+- `src/main/resources/synthea.properties` - Main configuration
+- `src/main/resources/geography/` - Census/demographics data
 
-### Module State Machine
+### Case Studies (Python)
 
-Modules are implemented as state machines where each state can be:
-- **Initial**: Entry point for the module
-- **Terminal**: Exit point for the module
-- **Delay**: Wait for a period of time
-- **Guard**: Conditional branching
-- **SetAttribute**: Set patient attributes
-- **Encounter**: Trigger a healthcare encounter
-- **ConditionOnset/ConditionEnd**: Start/stop conditions
-- **MedicationOrder/MedicationEnd**: Prescribe/stop medications
-- **Procedure**: Perform a medical procedure
-- **Observation**: Record vital signs or lab results
-- **Death**: End patient life
+Each case study follows a 4-script pipeline:
+1. `1_generate_data.py` - Run Synthea, extract CSVs, add URBAN flag
+2. `2_gen_bias.py` - Add condition flags and mask column for bias
+3. `3_train_models.py` - Train GBDT models on true vs biased labels
+4. `4_create_report.py` - Generate markdown report
 
-States connect via **Transitions** which can be:
-- Direct (immediate)
-- Distributed (probabilistic)
-- Conditional (logic-based)
-- Complex (table lookups)
+**Output**: `output/data/` (CSVs), `output/info/` (stats), `output/report.md` (final report)
 
-### Export System
+## Development Patterns
 
-The export system supports multiple formats via the `Exporter` abstraction:
+**Determinism**: Always use `person.rand()` for randomness, never `Math.random()`. This ensures reproducible simulations.
 
-- **FHIR**: R4 (default), STU3, DSTU2
-  - Enable: Set `exporter.fhir.export = true`
-  - Bulk FHIR (ndjson): Set `exporter.fhir.bulk_data = true`
-  - Transaction bundles for referential integrity
+**Module Development**: JSON modules go in `src/main/resources/modules/`. Run `./gradlew graphviz` to visualize state machines.
 
-- **C-CDA**: Enable via `exporter.ccda.export = true`
+**Code Systems**: SNOMED-CT (conditions), RxNorm (medications), LOINC (observations), CVX (immunizations)
 
-- **CSV**: Enable via `exporter.csv.export = true`
-  - Outputs multiple CSV files (patients, encounters, conditions, medications, etc.)
-  - Configurable file inclusion/exclusion
-
-- **Custom Exporters**: Implement `PatientExporter` or `PostCompletionExporter`
-  - Loaded via Java ServiceLoader when `exporter.enable_custom_exporters = true`
-
-**Key Export Classes**:
-- `FhirR4.java`: FHIR R4 conversion logic
-- `CSVExporter.java`: CSV export implementation
-- `CCDAExporter.java`: C-CDA document generation
-- `Flexporter`: Customizable FHIR transformation framework
-
-### World Model
-
-**Geography & Demographics** (`org.mitre.synthea.world.geography`):
-- `Location`: Represents cities/states with demographic data
-- `Demographics`: Loads census data for realistic population distribution
-
-**Agents** (`org.mitre.synthea.world.agents`):
-- `Person`: The patient being simulated
-- `Provider`: Healthcare facilities (hospitals, clinics, etc.)
-- `Payer`: Insurance companies and plans
-- `Clinician`: Healthcare providers
-
-**Concepts** (`org.mitre.synthea.world.concepts`):
-- `HealthRecord`: Complete medical record for a person
-  - Encounters, Conditions, Medications, Procedures, Observations, etc.
-- `Costs`: Cost modeling for procedures, medications, encounters
-- `Claim`: Insurance claims and reimbursement
-
-**Health Insurance System**:
-- Complex insurance eligibility and enrollment logic
-- Multiple payer types: Private, Medicare, Medicaid, Dual Eligible
-- Plan selection behaviors: best_rates, random, priority
-- Configurable via `generate.payers.*` settings
+**Timestamps**: All times in milliseconds since epoch. Use `Utilities.convertTime()` for conversions.
 
 ## Configuration
 
-Main configuration file: `src/main/resources/synthea.properties`
-
-Key configuration areas:
-- **Export formats**: Enable/disable different output formats
-- **Demographics**: Population distribution, geographic data
-- **Modules**: Which modules to run, module-specific parameters
-- **Costs**: Default costs for procedures, medications, encounters
-- **Providers**: Provider selection behavior, search distance
-- **Payers**: Insurance plan selection, adjustment behavior
-- **Physiology**: Enable/disable physiology simulations
-- **Lifecycle**: Quit smoking/alcoholism rates, adherence, death parameters
-
-Configuration can be overridden via:
+Override `synthea.properties` via:
 - Command line: `--config.setting=value`
-- Custom config file: `-c /path/to/config.properties`
+- Custom file: `-c /path/to/config.properties`
 - Programmatically: `Config.set("key", "value")`
 
-## Key File Locations
+Key settings:
+- `exporter.csv.export=true` - Enable CSV output
+- `exporter.fhir.export=true` - Enable FHIR output
+- `exporter.baseDirectory=./output` - Output location
 
-- **Modules**: `src/main/resources/modules/` - JSON state machine definitions
-- **Demographics**: `src/main/resources/geography/` - Census and location data
-- **Providers**: `src/main/resources/providers/` - Hospital and facility data
-- **Payers**: `src/main/resources/payers/` - Insurance company and plan data
-- **Costs**: `src/main/resources/costs/` - Pricing data
-- **Lookup Tables**: `src/main/resources/modules/lookup_tables/` - Module data tables
-- **Output**: `./output/` - Generated patient records (configurable)
+## Testing
 
-## Testing Notes
+**Java**: JUnit 4.13.2 with Mockito. Coverage via JaCoCo in `build/reports/jacoco/test/html/`.
 
-- Test framework: JUnit 4.13.2
-- Mocking: Mockito + PowerMock
-- Test utilities in `TestHelper.java` provide common setup methods
-- Tests use deterministic seeds for reproducibility
-- Coverage reports generated via JaCoCo in `build/reports/jacoco/test/html/`
-
-## Important Development Patterns
-
-1. **Module Development**: When creating new modules:
-   - JSON modules go in `src/main/resources/modules/`
-   - Use the Generic Module Framework (GMF) version 2.0
-   - Follow existing module patterns for state machines
-   - Use `./gradlew graphviz` to visualize module flow
-
-2. **Random Number Generation**: Always use person-specific RNG
-   - Each Person implements `RandomNumberGenerator`
-   - Use `person.rand()` for deterministic, reproducible randomness
-   - Never use `Math.random()` or `new Random()`
-
-3. **Exporter Implementation**:
-   - Patient-level exporters implement `PatientExporter`
-   - Post-generation exporters implement `PostCompletionExporter`
-   - Register via ServiceLoader in `META-INF/services/`
-
-4. **Costs and Claims**:
-   - Use cost data from `src/main/resources/costs/`
-   - Claims are generated automatically based on encounters
-   - Payer adjudication follows configured adjustment behavior
-
-5. **Timestamps**:
-   - All times are in milliseconds since epoch
-   - Timestep configurable via `generate.timestep` (default: 1 week)
-   - Use `Utilities.convertTime()` for time unit conversions
-
-6. **Code Systems**:
-   - SNOMED-CT for conditions
-   - RxNorm for medications
-   - LOINC for observations
-   - CVX for immunizations
-   - Use `HealthRecord.Code` class for all clinical codes
+**Python**: Case studies use numpy, pandas, scikit-learn. Managed via uv.
