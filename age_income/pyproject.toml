@@ -1,7 +1,11 @@
 [project]
 name = "age-income"
 version = "0.1.0"
-description = "Add your description here"
+description = "Intersectional age-income colorectal access bias case study"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "numpy>=2.0.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.5.0",
+]

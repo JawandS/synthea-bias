@@ -1,0 +1,13 @@
+plan_id,income_min,income_max,age_min,age_max,screening_start_age,mask_rate_crc,mask_rate_early
+high_access,90000,1000000000,40,49,45,0.08,0.18
+high_access,90000,1000000000,50,64,45,0.05,0.12
+high_access,90000,1000000000,65,74,45,0.04,0.10
+high_access,90000,1000000000,75,100,50,0.08,0.14
+standard_access,40000,89999.9999,40,49,50,0.18,0.32
+standard_access,40000,89999.9999,50,64,50,0.12,0.24
+standard_access,40000,89999.9999,65,74,50,0.10,0.20
+standard_access,40000,89999.9999,75,100,55,0.14,0.24
+restricted_access,0,39999.9999,40,49,55,0.36,0.55
+restricted_access,0,39999.9999,50,64,55,0.28,0.45
+restricted_access,0,39999.9999,65,74,55,0.20,0.34
+restricted_access,0,39999.9999,75,100,60,0.26,0.40
