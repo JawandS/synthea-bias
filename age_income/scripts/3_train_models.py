@@ -22,7 +22,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import accuracy_score, average_precision_score, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -78,6 +86,84 @@ def safe_metric(fn, y_true: np.ndarray, y_pred: np.ndarray | None = None, y_scor
     return 0.0
 
 
+def compute_fbeta(precision: float, recall: float, beta: float) -> float:
+    if precision + recall == 0:
+        return 0.0
+    b2 = beta * beta
+    return (1 + b2) * precision * recall / (b2 * precision + recall)
+
+
+def select_dynamic_threshold(y_val: np.ndarray, val_proba: np.ndarray) -> float:
+    """Choose a threshold robustly under class imbalance.
+
+    Strategy:
+    1. Search a dense threshold grid and optimize an F2-oriented utility.
+    2. Constrain to thresholds that emit at least a minimum number of positives.
+    3. If no threshold satisfies the constraint, fall back to prevalence matching.
+    """
+    if len(np.unique(y_val)) < 2:
+        return 0.5
+
+    n = len(y_val)
+    prevalence = float(y_val.mean())
+    # Keep a usable operating point: not too sparse, not "everyone positive".
+    min_rate = max(0.02, 0.8 * prevalence)
+    max_rate = min(0.25, 6.0 * prevalence)
+    min_pos_pred = max(1, int(min_rate * n))
+    max_pos_pred = max(min_pos_pred, int(max_rate * n))
+    recall_floor = max(0.15, min(0.50, 4 * prevalence))
+
+    thresholds = np.unique(
+        np.concatenate(
+            [
+                np.linspace(0.0, 1.0, 501),
+                np.quantile(val_proba, np.linspace(0.0, 1.0, 201)),
+            ]
+        )
+    )
+
+    best_threshold = 0.5
+    best_score = -1.0
+    found_recall_constrained = False
+    found_rate_constrained = False
+
+    for t in thresholds:
+        pred = (val_proba >= t).astype(int)
+        n_pos_pred = int(pred.sum())
+        precision = precision_score(y_val, pred, zero_division=0)
+        recall = recall_score(y_val, pred, zero_division=0)
+        bal_acc = balanced_accuracy_score(y_val, pred)
+        f1 = f1_score(y_val, pred, zero_division=0)
+        # Seek usable balance: favor F1/precision under realistic alert volume.
+        utility = (0.50 * f1) + (0.30 * precision) + (0.20 * bal_acc)
+
+        within_rate = min_pos_pred <= n_pos_pred <= max_pos_pred
+
+        if within_rate and recall >= recall_floor:
+            found_recall_constrained = True
+            if utility > best_score:
+                best_score = utility
+                best_threshold = float(t)
+        elif within_rate and not found_recall_constrained:
+            found_rate_constrained = True
+            if utility > best_score:
+                best_score = utility
+                best_threshold = float(t)
+        elif not found_recall_constrained and not found_rate_constrained:
+            # As a final fallback during search, keep best available candidate.
+            if utility > best_score:
+                best_score = utility
+                best_threshold = float(t)
+
+    if found_recall_constrained or found_rate_constrained:
+        return best_threshold
+
+    # Fallback: predicted positive rate ~ observed prevalence.
+    target_rate = min(0.25, max(prevalence * 3.0, 1 / max(n, 1)))
+    fallback = float(np.quantile(val_proba, max(0.0, 1 - target_rate)))
+    return fallback
+
+
 def train_and_eval(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -87,27 +173,32 @@ def train_and_eval(
     y_test_true: np.ndarray,
     seed: int,
 ) -> tuple[dict, np.ndarray]:
+    n_pos = int(y_train.sum())
+    n_neg = int(len(y_train) - n_pos)
+    pos_weight = (n_neg / max(n_pos, 1)) if n_pos > 0 else 1.0
+    sample_weight = np.where(y_train == 1, pos_weight, 1.0)
+
     model = GradientBoostingClassifier(
         n_estimators=300,
         learning_rate=0.05,
         max_depth=3,
         random_state=seed,
     )
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, sample_weight=sample_weight)
 
     val_proba = model.predict_proba(X_val)[:, 1]
-    if len(np.unique(y_val)) < 2:
-        threshold = 0.5
-    else:
-        thresholds = np.linspace(0.1, 0.9, 81)
-        f1_scores = [f1_score(y_val, (val_proba >= t).astype(int), zero_division=0) for t in thresholds]
-        threshold = float(thresholds[int(np.argmax(f1_scores))])
+    threshold = select_dynamic_threshold(y_val, val_proba)
+    val_pred = (val_proba >= threshold).astype(int)
 
     proba = model.predict_proba(X_test)[:, 1]
     pred = (proba >= threshold).astype(int)
 
     metrics = {
         "threshold": threshold,
+        "val_pred_pos": int(val_pred.sum()),
+        "test_pred_pos": int(pred.sum()),
+        "val_prevalence": float(np.mean(y_val)),
+        "test_prevalence": float(np.mean(y_test_true)),
         "auc": safe_metric(roc_auc_score, y_test_true, y_score=proba),
         "ap": safe_metric(average_precision_score, y_test_true, y_score=proba),
         "accuracy": float(accuracy_score(y_test_true, pred)),
@@ -180,6 +271,9 @@ def build_task_section(task_name: str, baseline: dict, biased: dict) -> str:
     return f"""## {task_name}
 
 Thresholds: baseline `{baseline['threshold']:.3f}`, biased `{biased['threshold']:.3f}`
+Operating points:
+- Baseline: val positives `{baseline['val_pred_pos']}`, test positives `{baseline['test_pred_pos']}`, test prevalence `{baseline['test_prevalence']:.3%}`
+- Biased: val positives `{biased['val_pred_pos']}`, test positives `{biased['test_pred_pos']}`, test prevalence `{biased['test_prevalence']:.3%}`
 
 | Metric | Baseline (train=true) | Biased (train=observed) | Delta |
 |--------|------------------------|--------------------------|-------|
