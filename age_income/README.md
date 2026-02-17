@@ -37,19 +37,41 @@ output/
 └── report.md
 ```
 
-## Canonical Columns (`output/data/data.csv`)
+## Column Overview (`output/data/data.csv`)
 
-| Column | Meaning |
-|---|---|
-| `has_crc_true` | True CRC diagnosis indicator |
-| `crc_stage_true` | True maximum stage (1-4, 0 if none) |
-| `has_early_crc_true` | True early-stage CRC indicator (stage I/II) |
-| `assigned_plan` | Plan assigned by age-income rule table |
-| `eligible_for_screening` | Whether age meets plan screening threshold |
-| `mask_crc` | Whether CRC diagnosis was masked |
-| `mask_early` | Whether early-stage flag was masked |
-| `observed_crc` | Biased observed CRC diagnosis |
-| `observed_early_crc` | Biased observed early-stage outcome |
+### Identity + Demographics
+- `id`: patient identifier
+- `age`: age at reference date
+- `male`: sex flag (`1` male, `0` otherwise)
+- `income`: annual income
+
+### True Labels
+- `crc_stage_true`: true max CRC stage (`1-4`, `0` if none)
+- `has_crc_true`: true CRC diagnosis flag
+- `has_early_crc_true`: true early-stage CRC flag (stage I/II)
+
+### Clinical Features
+- `diabetes`, `prediabetes`, `obesity`, `hypertension`, `hyperlipidemia`, `chf`: comorbidity flags
+- `bmi`: latest BMI value
+- `smoker`: smoking flag
+
+### Plan Policy Inputs
+- `assigned_plan`: plan assigned by age-income rules
+- `screening_start_age`: plan-specific screening threshold
+- `mask_rate_crc`: base CRC mask rate from policy table
+- `mask_rate_early`: base early-CRC mask rate from policy table
+- `eligible_for_screening`: whether age meets plan threshold
+
+### Derived Masking Variables
+- `age_multiplier`: age-band multiplier applied to mask rates
+- `effective_mask_rate_crc`: `mask_rate_crc * age_multiplier` (clipped to `[0,1]`)
+- `effective_mask_rate_early`: `mask_rate_early * age_multiplier` (clipped to `[0,1]`)
+- `mask_crc`: sampled mask outcome for CRC label
+- `mask_early`: sampled mask outcome for early-stage label
+
+### Observed (Biased) Labels
+- `observed_crc`: observed CRC after masking
+- `observed_early_crc`: observed early-stage CRC after masking
 
 ## Policy Configuration
 
@@ -64,6 +86,6 @@ The rules must cover all generated patients with no overlap.
 
 Training uses: `age, male, bmi, smoker, diabetes, prediabetes, obesity, hypertension, hyperlipidemia, chf`.
 
-Training excludes direct policy/bias variables: `income, poverty_ratio, assigned_plan, eligible_for_screening`.
+Training excludes direct policy/bias variables: `income, assigned_plan, eligible_for_screening`.
 
 Intermediate filtered files (`patients.csv`, `conditions.csv`, `observations.csv`) are removed after `2_gen_bias.py` to keep only the consolidated dataset.
