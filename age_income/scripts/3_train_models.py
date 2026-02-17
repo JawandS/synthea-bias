@@ -68,6 +68,14 @@ def load_data() -> pd.DataFrame:
     return pd.read_csv(DATA_DIR / "data.csv")
 
 
+def age_band_from_series(age: pd.Series) -> pd.Series:
+    return pd.cut(
+        age,
+        bins=[0, 49, 59, 69, 79, 1000],
+        labels=AGE_BANDS,
+    ).astype(str)
+
+
 def make_feature_matrix(df: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
     missing = [c for c in MODEL_FEATURES if c not in df.columns]
     if missing:
@@ -302,7 +310,7 @@ def main() -> None:
     y_early_true = df["has_early_crc_true"].to_numpy()
     y_early_obs = df["observed_early_crc"].to_numpy()
 
-    age_groups = df.loc[idx_test, "age_band"].astype(str)
+    age_groups = age_band_from_series(df.loc[idx_test, "age"])
     income_groups = pd.qcut(df.loc[idx_test, "income"], q=5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop").astype(str)
     age_income_groups = age_groups + "|" + income_groups
 
@@ -355,7 +363,7 @@ def main() -> None:
         "",
         f"- Samples: {len(df):,}",
         f"- Features: {', '.join(feature_names)}",
-        "- Excluded from model features: income, poverty_ratio, assigned_plan, eligible_for_screening",
+        "- Excluded from model features: income, assigned_plan, eligible_for_screening",
         f"- Train size: {len(idx_train):,}",
         f"- Validation size: {len(idx_val):,}",
         f"- Test size: {len(idx_test):,}",

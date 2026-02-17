@@ -179,16 +179,8 @@ def build_features(patients: pd.DataFrame, conditions: pd.DataFrame, observation
     df = pd.DataFrame()
     df["id"] = patients["Id"]
     df["age"] = ((reference_date - patients["BIRTHDATE"]).dt.days / 365.25).fillna(0).astype(int)
-    df["age_band"] = age_band_from_series(df["age"])
     df["male"] = (patients["GENDER"] == "M").astype(int)
     df["income"] = patient_numeric_column(patients, "INCOME", 0.0)
-    df["poverty_ratio"] = patient_numeric_column(patients, "POVERTY_RATIO", 0.0)
-
-    insurance_series = patients.get("INSURANCE_STATUS")
-    if insurance_series is None:
-        df["insurance_status"] = "unknown"
-    else:
-        df["insurance_status"] = insurance_series.fillna("unknown").astype(str).str.lower()
 
     # True CRC stage and targets
     cond = conditions.copy()
@@ -231,9 +223,10 @@ def build_features(patients: pd.DataFrame, conditions: pd.DataFrame, observation
 def apply_masking(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     out = df.copy()
+    age_band = age_band_from_series(out["age"])
 
     out["eligible_for_screening"] = (out["age"] >= out["screening_start_age"]).astype(int)
-    out["age_multiplier"] = out["age_band"].map(AGE_BAND_MULTIPLIER).fillna(1.0)
+    out["age_multiplier"] = age_band.map(AGE_BAND_MULTIPLIER).fillna(1.0)
 
     out["effective_mask_rate_crc"] = (out["mask_rate_crc"] * out["age_multiplier"]).clip(0, 1)
     out["effective_mask_rate_early"] = (out["mask_rate_early"] * out["age_multiplier"]).clip(0, 1)
@@ -283,8 +276,9 @@ def build_bias_report(df: pd.DataFrame, seed: int, rules_path: Path) -> str:
         )
 
     by_age_rows = []
+    age_band = age_band_from_series(df["age"])
     for band in AGE_BANDS:
-        sub = df[df["age_band"] == band]
+        sub = df[age_band == band]
         if len(sub) == 0:
             continue
         t = int(sub["has_crc_true"].sum())
@@ -298,7 +292,7 @@ def build_bias_report(df: pd.DataFrame, seed: int, rules_path: Path) -> str:
     q_labels = sorted(df[income_q.notna()].assign(income_q=income_q[income_q.notna()])["income_q"].astype(str).unique())
     for band in AGE_BANDS:
         for q in q_labels:
-            sub = df[(df["age_band"] == band) & (income_q.astype(str) == q)]
+            sub = df[(age_band == band) & (income_q.astype(str) == q)]
             if len(sub) == 0:
                 continue
             t = int(sub["has_crc_true"].sum())

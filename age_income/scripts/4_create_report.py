@@ -89,7 +89,7 @@ observed early-stage detection are masked by plan-specific access barriers.
 - Model training includes only clinical + demographic features:
   `age, male, bmi, smoker, diabetes, prediabetes, obesity, hypertension, hyperlipidemia, chf`
 - Model training excludes direct bias-policy features:
-  `income, poverty_ratio, assigned_plan, eligible_for_screening`
+  `income, assigned_plan, eligible_for_screening`
 - Fairness evaluation is reported by:
   age band, income quintile, and age x income intersections.
 
