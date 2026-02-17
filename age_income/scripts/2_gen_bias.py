@@ -261,8 +261,6 @@ def build_bias_report(df: pd.DataFrame, seed: int, rules_path: Path) -> str:
     true_early = int(df["has_early_crc_true"].sum())
     obs_early = int(df["observed_early_crc"].sum())
 
-    income_q = pd.qcut(df["income"], q=5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop")
-
     by_plan_rows = []
     for plan_id, sub in df.groupby("assigned_plan"):
         n = len(sub)
@@ -287,17 +285,6 @@ def build_bias_report(df: pd.DataFrame, seed: int, rules_path: Path) -> str:
         by_age_rows.append(
             f"| {band} | {len(sub):,} | {t:,} | {o:,} | {rate:.3f} | {(100 * t / len(sub)):.2f}% | {(100 * o / len(sub)):.2f}% |"
         )
-
-    age_income_rows = []
-    q_labels = sorted(df[income_q.notna()].assign(income_q=income_q[income_q.notna()])["income_q"].astype(str).unique())
-    for band in AGE_BANDS:
-        for q in q_labels:
-            sub = df[(age_band == band) & (income_q.astype(str) == q)]
-            if len(sub) == 0:
-                continue
-            t = int(sub["has_crc_true"].sum())
-            o = int(sub["observed_crc"].sum())
-            age_income_rows.append(f"| {band} | {q} | {len(sub):,} | {t:,} | {o:,} |")
 
     multiplier_rows = [
         f"| {band} | {AGE_BAND_MULTIPLIER[band]:.2f} |" for band in AGE_BANDS
@@ -339,12 +326,6 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 | Age band | Patients | True CRC | Observed CRC | Mean effective CRC mask rate | True prevalence | Observed prevalence |
 |----------|----------|----------|--------------|-------------------------------|-----------------|---------------------|
 {chr(10).join(by_age_rows)}
-
-## Age x Income Quintile
-
-| Age band | Income quintile | Patients | True CRC | Observed CRC |
-|----------|------------------|----------|----------|--------------|
-{chr(10).join(age_income_rows)}
 """
 
 

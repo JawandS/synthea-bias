@@ -58,7 +58,7 @@ uv run python scripts/4_create_report.py
   - equity-oriented baseline model on true labels
   - historically biased model on observed labels
 - Evaluates both against true labels on the same held-out test split.
-- Uses clinical + demographic features only (no income/policy variables), then reports subgroup performance by income to quantify historical-practice bias carryover.
+- Uses clinical + demographic features only (no income/policy variables), then reports subgroup performance by policy-aligned income bands to quantify historical-practice bias carryover.
 - Writes:
   - narrative results to `output/info/3_model.md`
   - aggregate metrics to `output/models/metrics.csv`

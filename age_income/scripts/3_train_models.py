@@ -54,6 +54,9 @@ MODEL_FEATURES = [
 ]
 
 AGE_BANDS = ["40-49", "50-59", "60-69", "70-79", "80+"]
+CRC_TASK_NAME = "CRC Screening Recommendation (Risk of CRC)"
+INCOME_CUTOFF_LOW = 40000
+INCOME_CUTOFF_HIGH = 90000
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,6 +76,15 @@ def age_band_from_series(age: pd.Series) -> pd.Series:
         age,
         bins=[0, 49, 59, 69, 79, 1000],
         labels=AGE_BANDS,
+    ).astype(str)
+
+
+def income_band_from_series(income: pd.Series) -> pd.Series:
+    return pd.cut(
+        income,
+        bins=[-np.inf, INCOME_CUTOFF_LOW, INCOME_CUTOFF_HIGH, np.inf],
+        labels=["low_income", "middle_income", "high_income"],
+        right=False,
     ).astype(str)
 
 
@@ -269,24 +281,49 @@ def subgroup_table_markdown(df: pd.DataFrame) -> str:
     return "\n".join(lines)
 
 
-def build_task_section(task_name: str, baseline: dict, biased: dict) -> str:
+def aggregate_delta_table(results: dict[str, dict[str, dict]]) -> str:
+    lines = [
+        "| Task | Metric | Baseline | Biased | Delta (Biased - Baseline) |",
+        "|------|--------|---------:|-------:|---------------------------:|",
+    ]
+    for task, payload in results.items():
+        for metric in ["auc", "ap", "accuracy", "precision", "recall", "f1"]:
+            b = payload["baseline"][metric]
+            o = payload["biased"][metric]
+            lines.append(f"| {task} | {metric.upper()} | {b:.4f} | {o:.4f} | {(o - b):+.4f} |")
+    return "\n".join(lines)
+
+
+def subgroup_delta_table(subgroup_df: pd.DataFrame, group_type: str, task_name: str | None = None) -> str:
     rows = []
-    for metric in ["auc", "ap", "accuracy", "precision", "recall", "f1"]:
-        b = baseline[metric]
-        o = biased[metric]
-        rows.append(f"| {metric.upper()} | {b:.4f} | {o:.4f} | {(o - b):+.4f} |")
+    base = subgroup_df[subgroup_df["model"] == "baseline"]
+    bias = subgroup_df[subgroup_df["model"] == "biased"]
+    merged = base.merge(
+        bias,
+        on=["task", "group_type", "group", "n", "positives"],
+        suffixes=("_baseline", "_biased"),
+    )
+    merged = merged[merged["group_type"] == group_type].copy()
+    if task_name is not None:
+        merged = merged[merged["task"] == task_name].copy()
+    merged["delta_recall"] = merged["recall_biased"] - merged["recall_baseline"]
+    merged["delta_fnr"] = merged["fnr_biased"] - merged["fnr_baseline"]
+    merged = merged.sort_values(["task", "group"])
 
-    return f"""## {task_name}
+    if len(merged) == 0:
+        return "No subgroup rows available."
 
-Thresholds: baseline `{baseline['threshold']:.3f}`, biased `{biased['threshold']:.3f}`
-Operating points:
-- Baseline: val positives `{baseline['val_pred_pos']}`, test positives `{baseline['test_pred_pos']}`, test prevalence `{baseline['test_prevalence']:.3%}`
-- Biased: val positives `{biased['val_pred_pos']}`, test positives `{biased['test_pred_pos']}`, test prevalence `{biased['test_prevalence']:.3%}`
-
-| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
-|--------|------------------------|--------------------------|-------|
-{chr(10).join(rows)}
-"""
+    lines = [
+        "| Task | Group | N | Positives | Baseline Recall | Biased Recall | Delta Recall | Baseline FNR | Biased FNR | Delta FNR |",
+        "|------|-------|--:|----------:|----------------:|--------------:|-------------:|-------------:|-----------:|----------:|",
+    ]
+    for _, r in merged.iterrows():
+        lines.append(
+            f"| {r['task']} | {r['group']} | {int(r['n']):,} | {int(r['positives']):,} | "
+            f"{r['recall_baseline']:.3f} | {r['recall_biased']:.3f} | {r['delta_recall']:+.3f} | "
+            f"{r['fnr_baseline']:.3f} | {r['fnr_biased']:.3f} | {r['delta_fnr']:+.3f} |"
+        )
+    return "\n".join(lines)
 
 
 def main() -> None:
@@ -311,7 +348,7 @@ def main() -> None:
     y_early_obs = df["observed_early_crc"].to_numpy()
 
     age_groups = age_band_from_series(df.loc[idx_test, "age"])
-    income_groups = pd.qcut(df.loc[idx_test, "income"], q=5, labels=["Q1", "Q2", "Q3", "Q4", "Q5"], duplicates="drop").astype(str)
+    income_groups = income_band_from_series(df.loc[idx_test, "income"])
     age_income_groups = age_groups + "|" + income_groups
 
     results = {}
@@ -324,14 +361,14 @@ def main() -> None:
     crc_bias_metrics, crc_bias_pred = train_and_eval(
         X[idx_train], y_crc_obs[idx_train], X[idx_val], y_crc_obs[idx_val], X[idx_test], y_crc_true[idx_test], args.seed
     )
-    results["CRC Screening Recommendation (Risk of CRC)"] = {"baseline": crc_base_metrics, "biased": crc_bias_metrics}
+    results[CRC_TASK_NAME] = {"baseline": crc_base_metrics, "biased": crc_bias_metrics}
 
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_groups, "age_band", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, income_groups, "income_quintile", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_income_groups, "age_x_income", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_groups, "age_band", "CRC Screening Recommendation (Risk of CRC)", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, income_groups, "income_quintile", "CRC Screening Recommendation (Risk of CRC)", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_income_groups, "age_x_income", "CRC Screening Recommendation (Risk of CRC)", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_groups, "age_band", CRC_TASK_NAME, "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, income_groups, "income_band", CRC_TASK_NAME, "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_income_groups, "age_x_income", CRC_TASK_NAME, "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_groups, "age_band", CRC_TASK_NAME, "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, income_groups, "income_band", CRC_TASK_NAME, "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_income_groups, "age_x_income", CRC_TASK_NAME, "biased"))
 
     # Task 2: Screening recommendation to catch early-stage CRC
     early_base_metrics, early_base_pred = train_and_eval(
@@ -374,32 +411,22 @@ def main() -> None:
         "",
     ]
 
-    for task, payload in results.items():
-        summary.append(build_task_section(task, payload["baseline"], payload["biased"]))
-        for group_type, title in [
-            ("age_band", "Age Band"),
-            ("income_quintile", "Income Quintile"),
-            ("age_x_income", "Age x Income"),
-        ]:
-            base_sub = subgroup_df[
-                (subgroup_df["task"] == task)
-                & (subgroup_df["model"] == "baseline")
-                & (subgroup_df["group_type"] == group_type)
-            ]
-            bias_sub = subgroup_df[
-                (subgroup_df["task"] == task)
-                & (subgroup_df["model"] == "biased")
-                & (subgroup_df["group_type"] == group_type)
-            ]
-
-            summary.append(f"### {task} - {title} Subgroup Metrics (Baseline)")
-            summary.append("")
-            summary.append(subgroup_table_markdown(base_sub))
-            summary.append("")
-            summary.append(f"### {task} - {title} Subgroup Metrics (Biased)")
-            summary.append("")
-            summary.append(subgroup_table_markdown(bias_sub))
-            summary.append("")
+    summary.extend(
+        [
+            "## Aggregate Performance Difference",
+            "",
+            aggregate_delta_table(results),
+            "",
+            "## Income Subgroup Performance Difference (CRC Screening Recommendation)",
+            "",
+            subgroup_delta_table(subgroup_df, "income_band", task_name=CRC_TASK_NAME),
+            "",
+            "## Age Subgroup Performance Difference (CRC Screening Recommendation)",
+            "",
+            subgroup_delta_table(subgroup_df, "age_band", task_name=CRC_TASK_NAME),
+            "",
+        ]
+    )
 
     output_path = INFO_DIR / "3_model.md"
     output_path.write_text("\n".join(summary))

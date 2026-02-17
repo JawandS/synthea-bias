@@ -1,6 +1,6 @@
 # Intersectional Case Study: Age + Income Access Bias in Colorectal Cancer Screening
 
-Generated: 2026-02-17 17:45:21
+Generated: 2026-02-17 18:04:17
 
 ## Scenario
 
@@ -34,7 +34,7 @@ learns from observed labels that encode unequal access.
 
 # Baseline Summary Stats
 
-Generated: 2026-02-17 17:44:46
+Generated: 2026-02-17 17:58:52
 
 ## Run Parameters
 
@@ -80,7 +80,7 @@ Generated: 2026-02-17 17:44:46
 
 # Bias Effect Report
 
-Generated: 2026-02-17 17:44:49
+Generated: 2026-02-17 17:58:55
 
 ## Inputs
 
@@ -125,41 +125,11 @@ Generated: 2026-02-17 17:44:49
 | 70-79 | 4,699 | 207 | 172 | 0.141 | 4.41% | 3.66% |
 | 80+ | 17,112 | 636 | 548 | 0.154 | 3.72% | 3.20% |
 
-## Age x Income Quintile
-
-| Age band | Income quintile | Patients | True CRC | Observed CRC |
-|----------|------------------|----------|----------|--------------|
-| 40-49 | Q1 | 661 | 1 | 0 |
-| 40-49 | Q2 | 677 | 2 | 0 |
-| 40-49 | Q3 | 682 | 1 | 1 |
-| 40-49 | Q4 | 696 | 1 | 1 |
-| 40-49 | Q5 | 763 | 2 | 1 |
-| 50-59 | Q1 | 718 | 7 | 4 |
-| 50-59 | Q2 | 681 | 17 | 11 |
-| 50-59 | Q3 | 780 | 14 | 11 |
-| 50-59 | Q4 | 713 | 12 | 9 |
-| 50-59 | Q5 | 777 | 10 | 10 |
-| 60-69 | Q1 | 800 | 22 | 15 |
-| 60-69 | Q2 | 844 | 27 | 20 |
-| 60-69 | Q3 | 880 | 31 | 25 |
-| 60-69 | Q4 | 851 | 33 | 29 |
-| 60-69 | Q5 | 866 | 34 | 33 |
-| 70-79 | Q1 | 948 | 48 | 38 |
-| 70-79 | Q2 | 909 | 43 | 35 |
-| 70-79 | Q3 | 968 | 38 | 30 |
-| 70-79 | Q4 | 948 | 37 | 34 |
-| 70-79 | Q5 | 926 | 41 | 35 |
-| 80+ | Q1 | 3,515 | 134 | 101 |
-| 80+ | Q2 | 3,527 | 136 | 111 |
-| 80+ | Q3 | 3,331 | 117 | 108 |
-| 80+ | Q4 | 3,434 | 113 | 102 |
-| 80+ | Q5 | 3,305 | 136 | 126 |
-
 ## Modeling Results
 
 # Model Results
 
-Generated: 2026-02-17 17:45:20
+Generated: 2026-02-17 18:04:17
 
 ## Configuration
 
@@ -174,237 +144,40 @@ Generated: 2026-02-17 17:45:20
 - Test size: 4,980
 - Seed: 42
 
-## CRC Screening Recommendation (Risk of CRC)
+## Aggregate Performance Difference
 
-Thresholds: baseline `0.558`, biased `0.589`
-Operating points:
-- Baseline: val positives `1395`, test positives `1408`, test prevalence `3.534%`
-- Biased: val positives `1021`, test positives `1041`, test prevalence `3.534%`
+| Task | Metric | Baseline | Biased | Delta (Biased - Baseline) |
+|------|--------|---------:|-------:|---------------------------:|
+| CRC Screening Recommendation (Risk of CRC) | AUC | 0.6125 | 0.6132 | +0.0008 |
+| CRC Screening Recommendation (Risk of CRC) | AP | 0.0465 | 0.0451 | -0.0015 |
+| CRC Screening Recommendation (Risk of CRC) | ACCURACY | 0.7064 | 0.7745 | +0.0681 |
+| CRC Screening Recommendation (Risk of CRC) | PRECISION | 0.0433 | 0.0451 | +0.0018 |
+| CRC Screening Recommendation (Risk of CRC) | RECALL | 0.3466 | 0.2670 | -0.0795 |
+| CRC Screening Recommendation (Risk of CRC) | F1 | 0.0770 | 0.0772 | +0.0002 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | AUC | 0.5980 | 0.5935 | -0.0044 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | AP | 0.0228 | 0.0210 | -0.0019 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | ACCURACY | 0.9090 | 0.6765 | -0.2325 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | PRECISION | 0.0233 | 0.0219 | -0.0014 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | RECALL | 0.1059 | 0.4118 | +0.3059 |
+| Early-Stage Screening Recommendation (Catch Early CRC) | F1 | 0.0382 | 0.0416 | +0.0034 |
 
-| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
-|--------|------------------------|--------------------------|-------|
-| AUC | 0.6125 | 0.6132 | +0.0008 |
-| AP | 0.0465 | 0.0451 | -0.0015 |
-| ACCURACY | 0.7064 | 0.7745 | +0.0681 |
-| PRECISION | 0.0433 | 0.0451 | +0.0018 |
-| RECALL | 0.3466 | 0.2670 | -0.0795 |
-| F1 | 0.0770 | 0.0772 | +0.0002 |
+## Income Subgroup Performance Difference (CRC Screening Recommendation)
 
-### CRC Screening Recommendation (Risk of CRC) - Age Band Subgroup Metrics (Baseline)
+| Task | Group | N | Positives | Baseline Recall | Biased Recall | Delta Recall | Baseline FNR | Biased FNR | Delta FNR |
+|------|-------|--:|----------:|----------------:|--------------:|-------------:|-------------:|-----------:|----------:|
+| CRC Screening Recommendation (Risk of CRC) | high_income | 1,011 | 40 | 0.325 | 0.275 | -0.050 | 0.675 | 0.725 | +0.050 |
+| CRC Screening Recommendation (Risk of CRC) | low_income | 2,152 | 63 | 0.333 | 0.286 | -0.048 | 0.667 | 0.714 | +0.048 |
+| CRC Screening Recommendation (Risk of CRC) | middle_income | 1,817 | 73 | 0.370 | 0.247 | -0.123 | 0.630 | 0.753 | +0.123 |
 
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49 | 531 | 0 | 0.000 | 0.000 |
-| 50-59 | 504 | 9 | 0.000 | 1.000 |
-| 60-69 | 634 | 26 | 0.231 | 0.769 |
-| 70-79 | 682 | 29 | 0.379 | 0.621 |
-| 80+ | 2,629 | 112 | 0.393 | 0.607 |
+## Age Subgroup Performance Difference (CRC Screening Recommendation)
 
-### CRC Screening Recommendation (Risk of CRC) - Age Band Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49 | 531 | 0 | 0.000 | 0.000 |
-| 50-59 | 504 | 9 | 0.000 | 1.000 |
-| 60-69 | 634 | 26 | 0.115 | 0.885 |
-| 70-79 | 682 | 29 | 0.345 | 0.655 |
-| 80+ | 2,629 | 112 | 0.304 | 0.696 |
-
-### CRC Screening Recommendation (Risk of CRC) - Income Quintile Subgroup Metrics (Baseline)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| Q1 | 996 | 30 | 0.433 | 0.567 |
-| Q2 | 996 | 30 | 0.233 | 0.767 |
-| Q3 | 996 | 36 | 0.361 | 0.639 |
-| Q4 | 996 | 40 | 0.375 | 0.625 |
-| Q5 | 996 | 40 | 0.325 | 0.675 |
-
-### CRC Screening Recommendation (Risk of CRC) - Income Quintile Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| Q1 | 996 | 30 | 0.333 | 0.667 |
-| Q2 | 996 | 30 | 0.267 | 0.733 |
-| Q3 | 996 | 36 | 0.222 | 0.778 |
-| Q4 | 996 | 40 | 0.250 | 0.750 |
-| Q5 | 996 | 40 | 0.275 | 0.725 |
-
-### CRC Screening Recommendation (Risk of CRC) - Age x Income Subgroup Metrics (Baseline)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49|Q1 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q2 | 104 | 0 | 0.000 | 0.000 |
-| 40-49|Q3 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q4 | 106 | 0 | 0.000 | 0.000 |
-| 40-49|Q5 | 125 | 0 | 0.000 | 0.000 |
-| 50-59|Q1 | 103 | 2 | 0.000 | 1.000 |
-| 50-59|Q2 | 86 | 0 | 0.000 | 0.000 |
-| 50-59|Q3 | 117 | 4 | 0.000 | 1.000 |
-| 50-59|Q4 | 96 | 2 | 0.000 | 1.000 |
-| 50-59|Q5 | 102 | 1 | 0.000 | 1.000 |
-| 60-69|Q1 | 112 | 1 | 0.000 | 1.000 |
-| 60-69|Q2 | 131 | 5 | 0.000 | 1.000 |
-| 60-69|Q3 | 127 | 4 | 0.250 | 0.750 |
-| 60-69|Q4 | 130 | 6 | 0.167 | 0.833 |
-| 60-69|Q5 | 134 | 10 | 0.400 | 0.600 |
-| 70-79|Q1 | 113 | 7 | 0.286 | 0.714 |
-| 70-79|Q2 | 128 | 6 | 0.500 | 0.500 |
-| 70-79|Q3 | 144 | 2 | 0.500 | 0.500 |
-| 70-79|Q4 | 145 | 7 | 0.429 | 0.571 |
-| 70-79|Q5 | 152 | 7 | 0.286 | 0.714 |
-| 80+|Q1 | 570 | 20 | 0.550 | 0.450 |
-| 80+|Q2 | 547 | 19 | 0.211 | 0.789 |
-| 80+|Q3 | 510 | 26 | 0.423 | 0.577 |
-| 80+|Q4 | 519 | 25 | 0.440 | 0.560 |
-| 80+|Q5 | 483 | 22 | 0.318 | 0.682 |
-
-### CRC Screening Recommendation (Risk of CRC) - Age x Income Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49|Q1 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q2 | 104 | 0 | 0.000 | 0.000 |
-| 40-49|Q3 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q4 | 106 | 0 | 0.000 | 0.000 |
-| 40-49|Q5 | 125 | 0 | 0.000 | 0.000 |
-| 50-59|Q1 | 103 | 2 | 0.000 | 1.000 |
-| 50-59|Q2 | 86 | 0 | 0.000 | 0.000 |
-| 50-59|Q3 | 117 | 4 | 0.000 | 1.000 |
-| 50-59|Q4 | 96 | 2 | 0.000 | 1.000 |
-| 50-59|Q5 | 102 | 1 | 0.000 | 1.000 |
-| 60-69|Q1 | 112 | 1 | 0.000 | 1.000 |
-| 60-69|Q2 | 131 | 5 | 0.000 | 1.000 |
-| 60-69|Q3 | 127 | 4 | 0.250 | 0.750 |
-| 60-69|Q4 | 130 | 6 | 0.000 | 1.000 |
-| 60-69|Q5 | 134 | 10 | 0.200 | 0.800 |
-| 70-79|Q1 | 113 | 7 | 0.286 | 0.714 |
-| 70-79|Q2 | 128 | 6 | 0.500 | 0.500 |
-| 70-79|Q3 | 144 | 2 | 0.500 | 0.500 |
-| 70-79|Q4 | 145 | 7 | 0.143 | 0.857 |
-| 70-79|Q5 | 152 | 7 | 0.429 | 0.571 |
-| 80+|Q1 | 570 | 20 | 0.400 | 0.600 |
-| 80+|Q2 | 547 | 19 | 0.263 | 0.737 |
-| 80+|Q3 | 510 | 26 | 0.231 | 0.769 |
-| 80+|Q4 | 519 | 25 | 0.360 | 0.640 |
-| 80+|Q5 | 483 | 22 | 0.273 | 0.727 |
-
-## Early-Stage Screening Recommendation (Catch Early CRC)
-
-Thresholds: baseline `0.656`, biased `0.524`
-Operating points:
-- Baseline: val positives `367`, test positives `386`, test prevalence `1.707%`
-- Biased: val positives `1538`, test positives `1596`, test prevalence `1.707%`
-
-| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
-|--------|------------------------|--------------------------|-------|
-| AUC | 0.5980 | 0.5935 | -0.0044 |
-| AP | 0.0228 | 0.0210 | -0.0019 |
-| ACCURACY | 0.9090 | 0.6765 | -0.2325 |
-| PRECISION | 0.0233 | 0.0219 | -0.0014 |
-| RECALL | 0.1059 | 0.4118 | +0.3059 |
-| F1 | 0.0382 | 0.0416 | +0.0034 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Age Band Subgroup Metrics (Baseline)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49 | 531 | 0 | 0.000 | 0.000 |
-| 50-59 | 504 | 5 | 0.000 | 1.000 |
-| 60-69 | 634 | 12 | 0.000 | 1.000 |
-| 70-79 | 682 | 15 | 0.133 | 0.867 |
-| 80+ | 2,629 | 53 | 0.132 | 0.868 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Age Band Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49 | 531 | 0 | 0.000 | 0.000 |
-| 50-59 | 504 | 5 | 0.000 | 1.000 |
-| 60-69 | 634 | 12 | 0.417 | 0.583 |
-| 70-79 | 682 | 15 | 0.600 | 0.400 |
-| 80+ | 2,629 | 53 | 0.396 | 0.604 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Income Quintile Subgroup Metrics (Baseline)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| Q1 | 996 | 16 | 0.312 | 0.688 |
-| Q2 | 996 | 12 | 0.000 | 1.000 |
-| Q3 | 996 | 14 | 0.000 | 1.000 |
-| Q4 | 996 | 26 | 0.077 | 0.923 |
-| Q5 | 996 | 17 | 0.118 | 0.882 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Income Quintile Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| Q1 | 996 | 16 | 0.562 | 0.438 |
-| Q2 | 996 | 12 | 0.417 | 0.583 |
-| Q3 | 996 | 14 | 0.286 | 0.714 |
-| Q4 | 996 | 26 | 0.269 | 0.731 |
-| Q5 | 996 | 17 | 0.588 | 0.412 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Age x Income Subgroup Metrics (Baseline)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49|Q1 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q2 | 104 | 0 | 0.000 | 0.000 |
-| 40-49|Q3 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q4 | 106 | 0 | 0.000 | 0.000 |
-| 40-49|Q5 | 125 | 0 | 0.000 | 0.000 |
-| 50-59|Q1 | 103 | 1 | 0.000 | 1.000 |
-| 50-59|Q2 | 86 | 0 | 0.000 | 0.000 |
-| 50-59|Q3 | 117 | 3 | 0.000 | 1.000 |
-| 50-59|Q4 | 96 | 0 | 0.000 | 0.000 |
-| 50-59|Q5 | 102 | 1 | 0.000 | 1.000 |
-| 60-69|Q1 | 112 | 0 | 0.000 | 0.000 |
-| 60-69|Q2 | 131 | 2 | 0.000 | 1.000 |
-| 60-69|Q3 | 127 | 1 | 0.000 | 1.000 |
-| 60-69|Q4 | 130 | 3 | 0.000 | 1.000 |
-| 60-69|Q5 | 134 | 6 | 0.000 | 1.000 |
-| 70-79|Q1 | 113 | 3 | 0.333 | 0.667 |
-| 70-79|Q2 | 128 | 3 | 0.000 | 1.000 |
-| 70-79|Q3 | 144 | 1 | 0.000 | 1.000 |
-| 70-79|Q4 | 145 | 6 | 0.167 | 0.833 |
-| 70-79|Q5 | 152 | 2 | 0.000 | 1.000 |
-| 80+|Q1 | 570 | 12 | 0.333 | 0.667 |
-| 80+|Q2 | 547 | 7 | 0.000 | 1.000 |
-| 80+|Q3 | 510 | 9 | 0.000 | 1.000 |
-| 80+|Q4 | 519 | 17 | 0.059 | 0.941 |
-| 80+|Q5 | 483 | 8 | 0.250 | 0.750 |
-
-### Early-Stage Screening Recommendation (Catch Early CRC) - Age x Income Subgroup Metrics (Biased)
-
-| Group | N | Positives | Recall | FNR |
-|-------|---:|----------:|-------:|----:|
-| 40-49|Q1 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q2 | 104 | 0 | 0.000 | 0.000 |
-| 40-49|Q3 | 98 | 0 | 0.000 | 0.000 |
-| 40-49|Q4 | 106 | 0 | 0.000 | 0.000 |
-| 40-49|Q5 | 125 | 0 | 0.000 | 0.000 |
-| 50-59|Q1 | 103 | 1 | 0.000 | 1.000 |
-| 50-59|Q2 | 86 | 0 | 0.000 | 0.000 |
-| 50-59|Q3 | 117 | 3 | 0.000 | 1.000 |
-| 50-59|Q4 | 96 | 0 | 0.000 | 0.000 |
-| 50-59|Q5 | 102 | 1 | 0.000 | 1.000 |
-| 60-69|Q1 | 112 | 0 | 0.000 | 0.000 |
-| 60-69|Q2 | 131 | 2 | 0.000 | 1.000 |
-| 60-69|Q3 | 127 | 1 | 1.000 | 0.000 |
-| 60-69|Q4 | 130 | 3 | 0.333 | 0.667 |
-| 60-69|Q5 | 134 | 6 | 0.500 | 0.500 |
-| 70-79|Q1 | 113 | 3 | 0.333 | 0.667 |
-| 70-79|Q2 | 128 | 3 | 1.000 | 0.000 |
-| 70-79|Q3 | 144 | 1 | 1.000 | 0.000 |
-| 70-79|Q4 | 145 | 6 | 0.333 | 0.667 |
-| 70-79|Q5 | 152 | 2 | 1.000 | 0.000 |
-| 80+|Q1 | 570 | 12 | 0.667 | 0.333 |
-| 80+|Q2 | 547 | 7 | 0.286 | 0.714 |
-| 80+|Q3 | 510 | 9 | 0.222 | 0.778 |
-| 80+|Q4 | 519 | 17 | 0.235 | 0.765 |
-| 80+|Q5 | 483 | 8 | 0.625 | 0.375 |
+| Task | Group | N | Positives | Baseline Recall | Biased Recall | Delta Recall | Baseline FNR | Biased FNR | Delta FNR |
+|------|-------|--:|----------:|----------------:|--------------:|-------------:|-------------:|-----------:|----------:|
+| CRC Screening Recommendation (Risk of CRC) | 40-49 | 531 | 0 | 0.000 | 0.000 | +0.000 | 0.000 | 0.000 | +0.000 |
+| CRC Screening Recommendation (Risk of CRC) | 50-59 | 504 | 9 | 0.000 | 0.000 | +0.000 | 1.000 | 1.000 | +0.000 |
+| CRC Screening Recommendation (Risk of CRC) | 60-69 | 634 | 26 | 0.231 | 0.115 | -0.115 | 0.769 | 0.885 | +0.115 |
+| CRC Screening Recommendation (Risk of CRC) | 70-79 | 682 | 29 | 0.379 | 0.345 | -0.034 | 0.621 | 0.655 | +0.034 |
+| CRC Screening Recommendation (Risk of CRC) | 80+ | 2,629 | 112 | 0.393 | 0.304 | -0.089 | 0.607 | 0.696 | +0.089 |
 
 ## Model Inputs Policy
 
@@ -413,7 +186,7 @@ Operating points:
 - Model training excludes direct bias-policy features for equity:
   `income, assigned_plan, eligible_for_screening`
 - Fairness evaluation is reported by:
-  age band, income quintile, and age x income intersections.
+  age band and policy-aligned income band.
 
 ## Interpretation Notes
 

@@ -95,7 +95,7 @@ learns from observed labels that encode unequal access.
 - Model training excludes direct bias-policy features for equity:
   `income, assigned_plan, eligible_for_screening`
 - Fairness evaluation is reported by:
-  age band, income quintile, and age x income intersections.
+  age band and policy-aligned income band.
 
 ## Interpretation Notes
 
