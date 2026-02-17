@@ -1,6 +1,6 @@
-# Intersectional Case Study: Age + Income Access Bias in Colorectal Cancer
+# Intersectional Case Study: Age + Income Access Bias in Colorectal Cancer Screening
 
-Generated: 2026-02-16 15:30:38
+Generated: 2026-02-17 17:45:21
 
 ## Scenario
 
@@ -9,6 +9,10 @@ screening access generosity. Generous plans screen earlier; restrictive plans sc
 The underlying disease burden (true CRC) remains unchanged, while observed diagnosis and
 observed early-stage detection are masked by plan-specific access barriers.
 
+Policy goal: recommend individuals at high risk of CRC for screening, while preserving early-stage
+case capture. The equity-oriented model excludes wealth variables, but the historically biased model
+learns from observed labels that encode unequal access.
+
 ## Policy Rules
 
 | Plan | Income Min | Income Max | Age Range | Screen Start Age | CRC Mask Rate | Early Mask Rate |
@@ -16,21 +20,21 @@ observed early-stage detection are masked by plan-specific access barriers.
 | high_access | $90,000 | $1,000,000,000 | 40-49 | 45 | 8% | 18% |
 | high_access | $90,000 | $1,000,000,000 | 50-64 | 45 | 5% | 12% |
 | high_access | $90,000 | $1,000,000,000 | 65-74 | 45 | 4% | 10% |
-| high_access | $90,000 | $1,000,000,000 | 75-100 | 50 | 8% | 14% |
+| high_access | $90,000 | $1,000,000,000 | 75-100 | 45 | 8% | 14% |
 | standard_access | $40,000 | $90,000 | 40-49 | 50 | 18% | 32% |
 | standard_access | $40,000 | $90,000 | 50-64 | 50 | 12% | 24% |
 | standard_access | $40,000 | $90,000 | 65-74 | 50 | 10% | 20% |
-| standard_access | $40,000 | $90,000 | 75-100 | 55 | 14% | 24% |
+| standard_access | $40,000 | $90,000 | 75-100 | 50 | 14% | 24% |
 | restricted_access | $0 | $40,000 | 40-49 | 55 | 36% | 55% |
 | restricted_access | $0 | $40,000 | 50-64 | 55 | 28% | 45% |
 | restricted_access | $0 | $40,000 | 65-74 | 55 | 20% | 34% |
-| restricted_access | $0 | $40,000 | 75-100 | 60 | 26% | 40% |
+| restricted_access | $0 | $40,000 | 75-100 | 55 | 26% | 40% |
 
 ## Baseline Data Summary
 
 # Baseline Summary Stats
 
-Generated: 2026-02-16 15:16:01
+Generated: 2026-02-17 17:44:46
 
 ## Run Parameters
 
@@ -76,7 +80,7 @@ Generated: 2026-02-16 15:16:01
 
 # Bias Effect Report
 
-Generated: 2026-02-16 15:16:05
+Generated: 2026-02-17 17:44:49
 
 ## Inputs
 
@@ -155,26 +159,29 @@ Generated: 2026-02-16 15:16:05
 
 # Model Results
 
-Generated: 2026-02-16 15:30:32
+Generated: 2026-02-17 17:45:20
 
 ## Configuration
 
+- Policy objective: recommend individuals for CRC screening based on predicted risk.
+- Secondary objective: maximize capture of early-stage CRC cases.
 - Samples: 33,200
 - Features: age, male, bmi, smoker, diabetes, prediabetes, obesity, hypertension, hyperlipidemia, chf
-- Excluded from model features: income, poverty_ratio, assigned_plan, eligible_for_screening
+- Excluded from model features for equity: income, assigned_plan, eligible_for_screening
+- Historical-bias simulation: observed labels reflect access barriers that disproportionately affect lower-income groups.
 - Train size: 23,240
 - Validation size: 4,980
 - Test size: 4,980
 - Seed: 42
 
-## CRC Diagnosis
+## CRC Screening Recommendation (Risk of CRC)
 
 Thresholds: baseline `0.558`, biased `0.589`
 Operating points:
 - Baseline: val positives `1395`, test positives `1408`, test prevalence `3.534%`
 - Biased: val positives `1021`, test positives `1041`, test prevalence `3.534%`
 
-| Metric | Baseline (train=true) | Biased (train=observed) | Delta |
+| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
 |--------|------------------------|--------------------------|-------|
 | AUC | 0.6125 | 0.6132 | +0.0008 |
 | AP | 0.0465 | 0.0451 | -0.0015 |
@@ -183,7 +190,7 @@ Operating points:
 | RECALL | 0.3466 | 0.2670 | -0.0795 |
 | F1 | 0.0770 | 0.0772 | +0.0002 |
 
-### CRC Diagnosis - Age Band Subgroup Metrics (Baseline)
+### CRC Screening Recommendation (Risk of CRC) - Age Band Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -193,7 +200,7 @@ Operating points:
 | 70-79 | 682 | 29 | 0.379 | 0.621 |
 | 80+ | 2,629 | 112 | 0.393 | 0.607 |
 
-### CRC Diagnosis - Age Band Subgroup Metrics (Biased)
+### CRC Screening Recommendation (Risk of CRC) - Age Band Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -203,7 +210,7 @@ Operating points:
 | 70-79 | 682 | 29 | 0.345 | 0.655 |
 | 80+ | 2,629 | 112 | 0.304 | 0.696 |
 
-### CRC Diagnosis - Income Quintile Subgroup Metrics (Baseline)
+### CRC Screening Recommendation (Risk of CRC) - Income Quintile Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -213,7 +220,7 @@ Operating points:
 | Q4 | 996 | 40 | 0.375 | 0.625 |
 | Q5 | 996 | 40 | 0.325 | 0.675 |
 
-### CRC Diagnosis - Income Quintile Subgroup Metrics (Biased)
+### CRC Screening Recommendation (Risk of CRC) - Income Quintile Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -223,7 +230,7 @@ Operating points:
 | Q4 | 996 | 40 | 0.250 | 0.750 |
 | Q5 | 996 | 40 | 0.275 | 0.725 |
 
-### CRC Diagnosis - Age x Income Subgroup Metrics (Baseline)
+### CRC Screening Recommendation (Risk of CRC) - Age x Income Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -253,7 +260,7 @@ Operating points:
 | 80+|Q4 | 519 | 25 | 0.440 | 0.560 |
 | 80+|Q5 | 483 | 22 | 0.318 | 0.682 |
 
-### CRC Diagnosis - Age x Income Subgroup Metrics (Biased)
+### CRC Screening Recommendation (Risk of CRC) - Age x Income Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -283,14 +290,14 @@ Operating points:
 | 80+|Q4 | 519 | 25 | 0.360 | 0.640 |
 | 80+|Q5 | 483 | 22 | 0.273 | 0.727 |
 
-## Early CRC Detection
+## Early-Stage Screening Recommendation (Catch Early CRC)
 
 Thresholds: baseline `0.656`, biased `0.524`
 Operating points:
 - Baseline: val positives `367`, test positives `386`, test prevalence `1.707%`
 - Biased: val positives `1538`, test positives `1596`, test prevalence `1.707%`
 
-| Metric | Baseline (train=true) | Biased (train=observed) | Delta |
+| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
 |--------|------------------------|--------------------------|-------|
 | AUC | 0.5980 | 0.5935 | -0.0044 |
 | AP | 0.0228 | 0.0210 | -0.0019 |
@@ -299,7 +306,7 @@ Operating points:
 | RECALL | 0.1059 | 0.4118 | +0.3059 |
 | F1 | 0.0382 | 0.0416 | +0.0034 |
 
-### Early CRC Detection - Age Band Subgroup Metrics (Baseline)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Age Band Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -309,7 +316,7 @@ Operating points:
 | 70-79 | 682 | 15 | 0.133 | 0.867 |
 | 80+ | 2,629 | 53 | 0.132 | 0.868 |
 
-### Early CRC Detection - Age Band Subgroup Metrics (Biased)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Age Band Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -319,7 +326,7 @@ Operating points:
 | 70-79 | 682 | 15 | 0.600 | 0.400 |
 | 80+ | 2,629 | 53 | 0.396 | 0.604 |
 
-### Early CRC Detection - Income Quintile Subgroup Metrics (Baseline)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Income Quintile Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -329,7 +336,7 @@ Operating points:
 | Q4 | 996 | 26 | 0.077 | 0.923 |
 | Q5 | 996 | 17 | 0.118 | 0.882 |
 
-### Early CRC Detection - Income Quintile Subgroup Metrics (Biased)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Income Quintile Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -339,7 +346,7 @@ Operating points:
 | Q4 | 996 | 26 | 0.269 | 0.731 |
 | Q5 | 996 | 17 | 0.588 | 0.412 |
 
-### Early CRC Detection - Age x Income Subgroup Metrics (Baseline)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Age x Income Subgroup Metrics (Baseline)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -369,7 +376,7 @@ Operating points:
 | 80+|Q4 | 519 | 17 | 0.059 | 0.941 |
 | 80+|Q5 | 483 | 8 | 0.250 | 0.750 |
 
-### Early CRC Detection - Age x Income Subgroup Metrics (Biased)
+### Early-Stage Screening Recommendation (Catch Early CRC) - Age x Income Subgroup Metrics (Biased)
 
 | Group | N | Positives | Recall | FNR |
 |-------|---:|----------:|-------:|----:|
@@ -403,8 +410,8 @@ Operating points:
 
 - Model training includes only clinical + demographic features:
   `age, male, bmi, smoker, diabetes, prediabetes, obesity, hypertension, hyperlipidemia, chf`
-- Model training excludes direct bias-policy features:
-  `income, poverty_ratio, assigned_plan, eligible_for_screening`
+- Model training excludes direct bias-policy features for equity:
+  `income, assigned_plan, eligible_for_screening`
 - Fairness evaluation is reported by:
   age band, income quintile, and age x income intersections.
 
@@ -414,3 +421,5 @@ Operating points:
 - `observed_crc` and `observed_early_crc` represent what appears in biased data after masking.
 - Any performance drop from baseline to biased model quantifies information loss induced by
   the age-income access policy.
+- Income is intentionally excluded from features, so income-related disparities in biased-model
+  performance arise from historical label distortion rather than explicit wealth inputs.

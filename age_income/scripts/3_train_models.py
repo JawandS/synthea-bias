@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-3_train_models.py - Train baseline vs biased models for CRC and early detection.
+3_train_models.py - Train baseline vs biased screening recommendation models.
 
 This script trains two tasks:
-1. CRC diagnosis model (target: has_crc_true vs observed_crc)
-2. Early CRC detection model (target: has_early_crc_true vs observed_early_crc)
+1. CRC risk screening recommendation (target: has_crc_true vs observed_crc)
+2. Early-stage capture recommendation (target: has_early_crc_true vs observed_early_crc)
 
 For each task, it trains:
-- Baseline model: trained on true labels
-- Biased model: trained on observed labels
+- Equity-oriented baseline model: trained on true labels
+- Historically-biased model: trained on observed labels
 
 Both are evaluated on the same held-out test set against true labels.
 """
@@ -57,7 +57,7 @@ AGE_BANDS = ["40-49", "50-59", "60-69", "70-79", "80+"]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train CRC models on true vs observed labels")
+    parser = argparse.ArgumentParser(description="Train screening recommendation models on true vs observed labels")
     parser.add_argument("--test-size", type=float, default=0.15)
     parser.add_argument("--val-size", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=42)
@@ -283,7 +283,7 @@ Operating points:
 - Baseline: val positives `{baseline['val_pred_pos']}`, test positives `{baseline['test_pred_pos']}`, test prevalence `{baseline['test_prevalence']:.3%}`
 - Biased: val positives `{biased['val_pred_pos']}`, test positives `{biased['test_pred_pos']}`, test prevalence `{biased['test_prevalence']:.3%}`
 
-| Metric | Baseline (train=true) | Biased (train=observed) | Delta |
+| Metric | Baseline (train=true labels) | Biased (train=observed labels) | Delta |
 |--------|------------------------|--------------------------|-------|
 {chr(10).join(rows)}
 """
@@ -317,37 +317,37 @@ def main() -> None:
     results = {}
     subgroup_frames = []
 
-    # Task 1: CRC diagnosis
+    # Task 1: Screening recommendation for CRC risk
     crc_base_metrics, crc_base_pred = train_and_eval(
         X[idx_train], y_crc_true[idx_train], X[idx_val], y_crc_true[idx_val], X[idx_test], y_crc_true[idx_test], args.seed
     )
     crc_bias_metrics, crc_bias_pred = train_and_eval(
         X[idx_train], y_crc_obs[idx_train], X[idx_val], y_crc_obs[idx_val], X[idx_test], y_crc_true[idx_test], args.seed
     )
-    results["CRC Diagnosis"] = {"baseline": crc_base_metrics, "biased": crc_bias_metrics}
+    results["CRC Screening Recommendation (Risk of CRC)"] = {"baseline": crc_base_metrics, "biased": crc_bias_metrics}
 
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_groups, "age_band", "CRC Diagnosis", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, income_groups, "income_quintile", "CRC Diagnosis", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_income_groups, "age_x_income", "CRC Diagnosis", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_groups, "age_band", "CRC Diagnosis", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, income_groups, "income_quintile", "CRC Diagnosis", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_income_groups, "age_x_income", "CRC Diagnosis", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_groups, "age_band", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, income_groups, "income_quintile", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_base_pred, age_income_groups, "age_x_income", "CRC Screening Recommendation (Risk of CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_groups, "age_band", "CRC Screening Recommendation (Risk of CRC)", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, income_groups, "income_quintile", "CRC Screening Recommendation (Risk of CRC)", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_crc_true[idx_test], crc_bias_pred, age_income_groups, "age_x_income", "CRC Screening Recommendation (Risk of CRC)", "biased"))
 
-    # Task 2: Early CRC detection
+    # Task 2: Screening recommendation to catch early-stage CRC
     early_base_metrics, early_base_pred = train_and_eval(
         X[idx_train], y_early_true[idx_train], X[idx_val], y_early_true[idx_val], X[idx_test], y_early_true[idx_test], args.seed
     )
     early_bias_metrics, early_bias_pred = train_and_eval(
         X[idx_train], y_early_obs[idx_train], X[idx_val], y_early_obs[idx_val], X[idx_test], y_early_true[idx_test], args.seed
     )
-    results["Early CRC Detection"] = {"baseline": early_base_metrics, "biased": early_bias_metrics}
+    results["Early-Stage Screening Recommendation (Catch Early CRC)"] = {"baseline": early_base_metrics, "biased": early_bias_metrics}
 
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, age_groups, "age_band", "Early CRC Detection", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, income_groups, "income_quintile", "Early CRC Detection", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, age_income_groups, "age_x_income", "Early CRC Detection", "baseline"))
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, age_groups, "age_band", "Early CRC Detection", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, income_groups, "income_quintile", "Early CRC Detection", "biased"))
-    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, age_income_groups, "age_x_income", "Early CRC Detection", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, age_groups, "age_band", "Early-Stage Screening Recommendation (Catch Early CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, income_groups, "income_quintile", "Early-Stage Screening Recommendation (Catch Early CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_base_pred, age_income_groups, "age_x_income", "Early-Stage Screening Recommendation (Catch Early CRC)", "baseline"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, age_groups, "age_band", "Early-Stage Screening Recommendation (Catch Early CRC)", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, income_groups, "income_quintile", "Early-Stage Screening Recommendation (Catch Early CRC)", "biased"))
+    subgroup_frames.append(compute_subgroup_metrics(y_early_true[idx_test], early_bias_pred, age_income_groups, "age_x_income", "Early-Stage Screening Recommendation (Catch Early CRC)", "biased"))
 
     subgroup_df = pd.concat(subgroup_frames, ignore_index=True)
 
@@ -361,9 +361,12 @@ def main() -> None:
         "",
         "## Configuration",
         "",
+        "- Policy objective: recommend individuals for CRC screening based on predicted risk.",
+        "- Secondary objective: maximize capture of early-stage CRC cases.",
         f"- Samples: {len(df):,}",
         f"- Features: {', '.join(feature_names)}",
-        "- Excluded from model features: income, assigned_plan, eligible_for_screening",
+        "- Excluded from model features for equity: income, assigned_plan, eligible_for_screening",
+        "- Historical-bias simulation: observed labels reflect access barriers that disproportionately affect lower-income groups.",
         f"- Train size: {len(idx_train):,}",
         f"- Validation size: {len(idx_val):,}",
         f"- Test size: {len(idx_test):,}",

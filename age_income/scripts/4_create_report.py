@@ -57,7 +57,7 @@ def main() -> None:
     model = load_text(INFO_DIR / "3_model.md", "Model report not generated.")
     rules_table = build_rule_table(CONFIG_DIR / "plan_rules.csv")
 
-    report = f"""# Intersectional Case Study: Age + Income Access Bias in Colorectal Cancer
+    report = f"""# Intersectional Case Study: Age + Income Access Bias in Colorectal Cancer Screening
 
 Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
@@ -67,6 +67,10 @@ This case study models an intersectional access pattern where age and income joi
 screening access generosity. Generous plans screen earlier; restrictive plans screen later.
 The underlying disease burden (true CRC) remains unchanged, while observed diagnosis and
 observed early-stage detection are masked by plan-specific access barriers.
+
+Policy goal: recommend individuals at high risk of CRC for screening, while preserving early-stage
+case capture. The equity-oriented model excludes wealth variables, but the historically biased model
+learns from observed labels that encode unequal access.
 
 ## Policy Rules
 
@@ -88,7 +92,7 @@ observed early-stage detection are masked by plan-specific access barriers.
 
 - Model training includes only clinical + demographic features:
   `age, male, bmi, smoker, diabetes, prediabetes, obesity, hypertension, hyperlipidemia, chf`
-- Model training excludes direct bias-policy features:
+- Model training excludes direct bias-policy features for equity:
   `income, assigned_plan, eligible_for_screening`
 - Fairness evaluation is reported by:
   age band, income quintile, and age x income intersections.
@@ -99,6 +103,8 @@ observed early-stage detection are masked by plan-specific access barriers.
 - `observed_crc` and `observed_early_crc` represent what appears in biased data after masking.
 - Any performance drop from baseline to biased model quantifies information loss induced by
   the age-income access policy.
+- Income is intentionally excluded from features, so income-related disparities in biased-model
+  performance arise from historical label distortion rather than explicit wealth inputs.
 """
 
     out_path = OUTPUT_DIR / "report.md"
