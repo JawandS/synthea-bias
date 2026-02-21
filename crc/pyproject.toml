@@ -1,0 +1,11 @@
+[project]
+name = "crc-bias"
+version = "0.1.0"
+description = "Colorectal screening intersectional bias case study"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.5.0",
+]
