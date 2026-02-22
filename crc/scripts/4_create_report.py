@@ -47,7 +47,8 @@ when income is intentionally excluded from training features.
 - Baseline model is trained on `true_screened_in_last_5y`.
 - Biased model is trained on `observed_screened_in_last_5y`.
 - Both are evaluated against `true_screened_in_last_5y`.
-- Divergence in subgroup recall/F1 reflects information loss induced by biased label capture.
+- Subgroup metrics are computed on the held-out test split from a stratified train/validation/test partition.
+- Baseline-vs-biased subgroup recall/F1 deltas reflect information loss induced by biased label capture.
 """
 
     out_path = OUTPUT_DIR / "report.md"

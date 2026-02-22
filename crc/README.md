@@ -5,7 +5,7 @@ Goal: build a GBDT that recommends CRC screening from demographics + clinical fe
 ## Scope
 
 - Use Synthea CRC behavior where possible.
-- Restrict cohort to ages `50-100` (all eligible for screening).
+- Restrict cohort to ages `50-80`.
 - Define labels:
   - `true_screened_in_last_5y`
   - `observed_screened_in_last_5y` (after masking)
@@ -65,7 +65,7 @@ Analysis-only columns:
 
 1. `scripts/1_generate_data.py`
 - Generate/extract `patients.csv`, `conditions.csv`, `procedures.csv`, `observations.csv`.
-- Filter to age `50-100`.
+- Filter to age `50-80`.
 - Write `output/info/1_summary_stats.md`.
 
 2. `scripts/2_gen_bias.py`
@@ -77,7 +77,7 @@ Analysis-only columns:
 - Train baseline vs biased GBDT with identical splits.
 - Tune threshold on validation (`f1`).
 - Report AUC, recall, F1 overall and by:
-  - age bands: `50-59`, `60-69`, `70-79`, `80+`
+  - age bands: `50-54`, `55-59`, `60-64`, `65-69`, `70-74`, `75-80`
   - income bands
   - age x income intersections
 - Write `output/info/3_model.md`.

@@ -145,13 +145,24 @@ def main() -> None:
         seed,
     )
 
+    split_summary = pd.DataFrame(
+        [
+            {"split": "train", "n": len(train_idx), "fraction": len(train_idx) / len(df)},
+            {"split": "validation", "n": len(val_idx), "fraction": len(val_idx) / len(df)},
+            {"split": "test", "n": len(test_idx), "fraction": len(test_idx) / len(df)},
+        ]
+    )
+
     test_df = df.iloc[test_idx].copy()
     test_df["baseline_pred"] = baseline_pred
     test_df["biased_pred"] = biased_pred
 
-    age_metrics = subgroup_metrics(test_df, "biased_pred", ["age_band"])
-    inc_metrics = subgroup_metrics(test_df, "biased_pred", ["income_band"])
-    inter_metrics = subgroup_metrics(test_df, "biased_pred", ["age_band", "income_band"])
+    age_metrics_baseline = subgroup_metrics(test_df, "baseline_pred", ["age_band"])
+    age_metrics_biased = subgroup_metrics(test_df, "biased_pred", ["age_band"])
+    inc_metrics_baseline = subgroup_metrics(test_df, "baseline_pred", ["income_band"])
+    inc_metrics_biased = subgroup_metrics(test_df, "biased_pred", ["income_band"])
+    inter_metrics_baseline = subgroup_metrics(test_df, "baseline_pred", ["age_band", "income_band"])
+    inter_metrics_biased = subgroup_metrics(test_df, "biased_pred", ["age_band", "income_band"])
 
     overall = pd.DataFrame([
         {"model": "baseline", **baseline_metrics},
@@ -160,21 +171,40 @@ def main() -> None:
 
     report = f"""# CRC Model Results
 
+## Data Splits Used For Modeling
+
+All subgroup metrics below are calculated on the held-out test split.
+Splits are stratified by `true_screened_in_last_5y`.
+
+{split_summary.to_markdown(index=False)}
+
 ## Overall (evaluated against true_screened_in_last_5y)
 
 {overall.to_markdown(index=False)}
 
+## Baseline model subgroup performance by age
+
+{age_metrics_baseline.sort_values(['age_band']).to_markdown(index=False)}
+
 ## Biased model subgroup performance by age
 
-{age_metrics.sort_values(['age_band']).to_markdown(index=False)}
+{age_metrics_biased.sort_values(['age_band']).to_markdown(index=False)}
+
+## Baseline model subgroup performance by income
+
+{inc_metrics_baseline.sort_values(['income_band']).to_markdown(index=False)}
 
 ## Biased model subgroup performance by income
 
-{inc_metrics.sort_values(['income_band']).to_markdown(index=False)}
+{inc_metrics_biased.sort_values(['income_band']).to_markdown(index=False)}
+
+## Baseline model subgroup performance by age x income
+
+{inter_metrics_baseline.sort_values(['age_band', 'income_band']).to_markdown(index=False)}
 
 ## Biased model subgroup performance by age x income
 
-{inter_metrics.sort_values(['age_band', 'income_band']).to_markdown(index=False)}
+{inter_metrics_biased.sort_values(['age_band', 'income_band']).to_markdown(index=False)}
 """
 
     (INFO_DIR / "3_model.md").write_text(report)

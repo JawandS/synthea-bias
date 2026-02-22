@@ -25,6 +25,10 @@ IBD_CODES = {"34000006", "64766004"}
 
 SMOKING_CODE = "72166-2"
 BMI_CODE = "39156-5"
+AGE_MIN = 50
+AGE_MAX = 80
+AGE_BIN_EDGES = [49, 54, 59, 64, 69, 74, 80]
+AGE_BIN_LABELS = ["50-54", "55-59", "60-64", "65-69", "70-74", "75-80"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,8 +39,9 @@ def parse_args() -> argparse.Namespace:
 
 def infer_reference_date(procedures: pd.DataFrame, conditions: pd.DataFrame, observations: pd.DataFrame) -> pd.Timestamp:
     candidates: list[pd.Timestamp] = []
-    for frame, col in [(procedures, "DATE"), (conditions, "START"), (observations, "DATE")]:
-        if col in frame.columns:
+    proc_time_col = "DATE" if "DATE" in procedures.columns else "START" if "START" in procedures.columns else None
+    for frame, col in [(procedures, proc_time_col), (conditions, "START"), (observations, "DATE")]:
+        if col and col in frame.columns:
             values = pd.to_datetime(frame[col], errors="coerce", utc=True).dropna()
             if len(values) > 0:
                 candidates.append(values.dt.tz_convert(None).max())
@@ -47,7 +52,7 @@ def latest_observation(observations: pd.DataFrame, code: str) -> pd.Series:
     obs = observations[observations["CODE"].astype(str) == code].copy()
     if len(obs) == 0:
         return pd.Series(dtype=object)
-    obs["DATE"] = pd.to_datetime(obs["DATE"], errors="coerce")
+    obs["DATE"] = pd.to_datetime(obs["DATE"], errors="coerce", utc=True).dt.tz_convert(None)
     obs = obs.sort_values("DATE").groupby("PATIENT").last()
     return obs["VALUE"]
 
@@ -58,7 +63,12 @@ def flagged_patients(conditions: pd.DataFrame, code_set: set[str]) -> set[str]:
 
 
 def age_band(age: pd.Series) -> pd.Series:
-    return pd.cut(age, bins=[49, 59, 69, 79, 200], labels=["50-59", "60-69", "70-79", "80+"], include_lowest=True).astype(str)
+    return pd.cut(
+        age,
+        bins=AGE_BIN_EDGES,
+        labels=AGE_BIN_LABELS,
+        include_lowest=True,
+    ).astype(str)
 
 
 def income_band(income: pd.Series) -> pd.Series:
@@ -81,7 +91,7 @@ def build_dataset(seed: int) -> pd.DataFrame:
     patients = patients.copy()
     patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"], errors="coerce")
     patients["age"] = ((ref_date - patients["BIRTHDATE"]).dt.days / 365.25).fillna(0).astype(int)
-    patients = patients[(patients["age"] >= 50) & (patients["age"] <= 100)].copy()
+    patients = patients[(patients["age"] >= AGE_MIN) & (patients["age"] <= AGE_MAX)].copy()
 
     df = pd.DataFrame({
         "id": patients["Id"].astype(str),
@@ -111,7 +121,7 @@ def build_dataset(seed: int) -> pd.DataFrame:
 
     enc = encounters.copy()
     enc["PATIENT"] = enc["PATIENT"].astype(str)
-    enc["START"] = pd.to_datetime(enc["START"], errors="coerce")
+    enc["START"] = pd.to_datetime(enc["START"], errors="coerce", utc=True).dt.tz_convert(None)
     two_year_start = ref_date - pd.Timedelta(days=365 * 2)
     recent_enc = enc[enc["START"] >= two_year_start].copy()
 
@@ -125,8 +135,11 @@ def build_dataset(seed: int) -> pd.DataFrame:
 
     proc = procedures.copy()
     proc["PATIENT"] = proc["PATIENT"].astype(str)
-    proc["DATE"] = pd.to_datetime(proc["DATE"], errors="coerce")
-    proc = proc[(proc["CODE"].astype(str) == CRC_SCREENING_CODE) & (proc["DATE"] >= ref_date - pd.Timedelta(days=365 * 5))]
+    proc_time_col = "DATE" if "DATE" in proc.columns else "START" if "START" in proc.columns else None
+    if proc_time_col is None:
+        raise KeyError("Missing procedure timestamp column (expected DATE or START)")
+    proc[proc_time_col] = pd.to_datetime(proc[proc_time_col], errors="coerce", utc=True).dt.tz_convert(None)
+    proc = proc[(proc["CODE"].astype(str) == CRC_SCREENING_CODE) & (proc[proc_time_col] >= ref_date - pd.Timedelta(days=365 * 5))]
 
     screened_ids = set(proc["PATIENT"].unique())
     df["true_screened_in_last_5y"] = df["id"].isin(screened_ids).astype(int)
@@ -174,7 +187,7 @@ def write_report(df: pd.DataFrame) -> None:
 - Observed screening prevalence: {overall_observed:.3f}
 - Relative loss from masking: {(overall_true - overall_observed) / max(overall_true, 1e-9):.1%}
 
-## By Age Band
+## By Age Band (5-year bins)
 
 {age_tbl}
 

@@ -30,11 +30,15 @@ RELEVANT_FILES = [
 ]
 
 CRC_SCREENING_CODE = "73761001"
+AGE_MIN = 50
+AGE_MAX = 80
+AGE_BIN_EDGES = [49, 54, 59, 64, 69, 74, 80]
+AGE_BIN_LABELS = ["50-54", "55-59", "60-64", "65-69", "70-74", "75-80"]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate CRC baseline data")
-    parser.add_argument("-p", "--population", type=int, default=20000)
+    parser.add_argument("-p", "--population", type=int, default=12000)
     parser.add_argument("-s", "--seed", type=int, default=160)
     parser.add_argument("--skip-synthea", action="store_true")
     return parser.parse_args()
@@ -53,7 +57,7 @@ def run_synthea(population: int, seed: int) -> None:
         "-p",
         str(population),
         "-a",
-        "50-100",
+        f"{AGE_MIN}-{AGE_MAX}",
         "--generate.only_alive_patients=false",
         "--exporter.csv.export=true",
         "--exporter.csv.append_mode=false",
@@ -119,22 +123,54 @@ def write_summary(dfs: dict[str, pd.DataFrame], population: int, seed: int) -> N
     patients["BIRTHDATE"] = pd.to_datetime(patients["BIRTHDATE"], errors="coerce")
     ref_date = infer_reference_date(conditions, procedures, observations)
     patients["age"] = ((ref_date - patients["BIRTHDATE"]).dt.days / 365.25).fillna(0).astype(int)
-    patients = patients[(patients["age"] >= 50) & (patients["age"] <= 100)].copy()
+    patients = patients[(patients["age"] >= AGE_MIN) & (patients["age"] <= AGE_MAX)].copy()
+    patients["age_band"] = pd.cut(
+        patients["age"],
+        bins=AGE_BIN_EDGES,
+        labels=AGE_BIN_LABELS,
+        include_lowest=True,
+    ).astype(str)
 
     procedures = procedures.copy()
     procedures["CODE"] = procedures.get("CODE", pd.Series(dtype=object)).astype(str)
-    screened = procedures[procedures["CODE"] == CRC_SCREENING_CODE]
+    screened = procedures[procedures["CODE"] == CRC_SCREENING_CODE].copy()
+    proc_time_col = "DATE" if "DATE" in screened.columns else "START" if "START" in screened.columns else None
+    if proc_time_col is not None:
+        screened[proc_time_col] = pd.to_datetime(screened[proc_time_col], errors="coerce", utc=True).dt.tz_convert(None)
+        screened_last5y = screened[screened[proc_time_col] >= ref_date - pd.Timedelta(days=365 * 5)].copy()
+    else:
+        screened_last5y = screened.iloc[0:0].copy()
+
+    cohort_ids = set(patients["Id"].astype(str))
+    screened_last5y_ids = set(screened_last5y.get("PATIENT", pd.Series(dtype=object)).astype(str)) & cohort_ids
+    age_dist = (
+        patients.groupby("age_band", observed=False)
+        .size()
+        .rename("n")
+        .reset_index()
+        .assign(pct=lambda d: d["n"] / max(len(patients), 1))
+    )
+    cohort_capture = len(patients) / max(population, 1)
 
     summary = f"""# CRC Baseline Summary
 
 - Requested population: {population:,}
 - Seed: {seed}
-- Cohort size (age 50-100): {len(patients):,}
+- Cohort definition: age {AGE_MIN}-{AGE_MAX}
+- Cohort size: {len(patients):,} ({cohort_capture:.1%} of requested)
 - Male: {(patients['GENDER'] == 'M').mean():.1%}
 - Mean age: {patients['age'].mean():.1f}
 - Median age: {patients['age'].median():.0f}
 - Mean income (USD): {pd.to_numeric(patients.get('INCOME', 0), errors='coerce').fillna(0).mean():,.0f}
-- Raw colonoscopy procedure rows (SNOMED {CRC_SCREENING_CODE}): {len(screened):,}
+- Median income (USD): {pd.to_numeric(patients.get('INCOME', 0), errors='coerce').fillna(0).median():,.0f}
+- Patients with colonoscopy in last 5y (proxy true-screened): {len(screened_last5y_ids):,}
+- Colonoscopy prevalence in cohort (last 5y): {len(screened_last5y_ids) / max(len(patients), 1):.1%}
+- Raw colonoscopy procedure rows (SNOMED {CRC_SCREENING_CODE}, all history): {len(screened):,}
+- Raw colonoscopy procedure rows (SNOMED {CRC_SCREENING_CODE}, last 5y): {len(screened_last5y):,}
+
+## Cohort Age Distribution (5-year bins)
+
+{age_dist.to_markdown(index=False)}
 """
     (INFO_DIR / "1_summary_stats.md").write_text(summary)
     print(f"Wrote {INFO_DIR / '1_summary_stats.md'}")
