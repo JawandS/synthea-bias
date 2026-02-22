@@ -12,6 +12,8 @@ import pandas as pd
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 PROJECT_DIR = SCRIPT_DIR.parent
+REPO_ROOT = PROJECT_DIR.parent
+SYNTHEA_OUTPUT_CSV_DIR = REPO_ROOT / "synthea" / "output_crc" / "csv"
 OUTPUT_DIR = PROJECT_DIR / "output"
 DATA_DIR = OUTPUT_DIR / "data"
 INFO_DIR = OUTPUT_DIR / "info"
@@ -80,11 +82,17 @@ def income_band(income: pd.Series) -> pd.Series:
 
 
 def build_dataset(seed: int) -> pd.DataFrame:
-    patients = pd.read_csv(DATA_DIR / "patients.csv")
-    conditions = pd.read_csv(DATA_DIR / "conditions.csv")
-    procedures = pd.read_csv(DATA_DIR / "procedures.csv")
-    observations = pd.read_csv(DATA_DIR / "observations.csv")
-    encounters = pd.read_csv(DATA_DIR / "encounters.csv")
+    if not SYNTHEA_OUTPUT_CSV_DIR.exists():
+        raise FileNotFoundError(
+            f"Missing Synthea CSV directory: {SYNTHEA_OUTPUT_CSV_DIR}. "
+            "Run scripts/1_generate_data.py first."
+        )
+
+    patients = pd.read_csv(SYNTHEA_OUTPUT_CSV_DIR / "patients.csv")
+    conditions = pd.read_csv(SYNTHEA_OUTPUT_CSV_DIR / "conditions.csv")
+    procedures = pd.read_csv(SYNTHEA_OUTPUT_CSV_DIR / "procedures.csv")
+    observations = pd.read_csv(SYNTHEA_OUTPUT_CSV_DIR / "observations.csv")
+    encounters = pd.read_csv(SYNTHEA_OUTPUT_CSV_DIR / "encounters.csv")
 
     ref_date = infer_reference_date(procedures, conditions, observations)
 

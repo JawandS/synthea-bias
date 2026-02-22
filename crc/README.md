@@ -64,12 +64,12 @@ Analysis-only columns:
 ## 4-Script Plan
 
 1. `scripts/1_generate_data.py`
-- Generate/extract `patients.csv`, `conditions.csv`, `procedures.csv`, `observations.csv`.
+- Generate Synthea output under `synthea/output_crc/csv` and write summary stats.
 - Filter to age `50-80`.
 - Write `output/info/1_summary_stats.md`.
 
 2. `scripts/2_gen_bias.py`
-- Build `output/data/data.csv`.
+- Build `output/data/data.csv` directly from `synthea/output_crc/csv`.
 - Create true/observed screening labels and `mask_screening` using formula above.
 - Write `output/info/2_bias_effect.md` with age, income, and age x income prevalence tables.
 

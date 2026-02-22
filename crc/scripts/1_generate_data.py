@@ -18,7 +18,6 @@ SYNTHEA_DIR = REPO_ROOT / "synthea"
 SYNTHEA_OUTPUT_DIR = SYNTHEA_DIR / "output_crc"
 
 OUTPUT_DIR = PROJECT_DIR / "output"
-DATA_DIR = OUTPUT_DIR / "data"
 INFO_DIR = OUTPUT_DIR / "info"
 
 RELEVANT_FILES = [
@@ -38,7 +37,7 @@ AGE_BIN_LABELS = ["50-54", "55-59", "60-64", "65-69", "70-74", "75-80"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate CRC baseline data")
-    parser.add_argument("-p", "--population", type=int, default=12000)
+    parser.add_argument("-p", "--population", type=int, default=16000)
     parser.add_argument("-s", "--seed", type=int, default=160)
     parser.add_argument("--skip-synthea", action="store_true")
     return parser.parse_args()
@@ -89,13 +88,12 @@ def infer_reference_date(conditions: pd.DataFrame, procedures: pd.DataFrame, obs
     return max(candidates) if candidates else pd.Timestamp.utcnow().normalize()
 
 
-def copy_data() -> dict[str, pd.DataFrame]:
+def load_source_data() -> dict[str, pd.DataFrame]:
     csv_dir = SYNTHEA_OUTPUT_DIR / "csv"
     if not csv_dir.exists():
         print(f"Missing Synthea output at {csv_dir}", file=sys.stderr)
         sys.exit(1)
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     INFO_DIR.mkdir(parents=True, exist_ok=True)
 
     dfs: dict[str, pd.DataFrame] = {}
@@ -105,9 +103,8 @@ def copy_data() -> dict[str, pd.DataFrame]:
             print(f"Warning: {file_name} missing", file=sys.stderr)
             continue
         df = pd.read_csv(src)
-        df.to_csv(DATA_DIR / file_name, index=False)
         dfs[file_name] = df
-        print(f"Wrote {file_name}: {len(df):,} rows")
+        print(f"Loaded {file_name}: {len(df):,} rows")
     return dfs
 
 
@@ -181,7 +178,7 @@ def main() -> None:
     if not args.skip_synthea:
         run_synthea(args.population, args.seed)
 
-    dfs = copy_data()
+    dfs = load_source_data()
     write_summary(dfs, args.population, args.seed)
 
 
