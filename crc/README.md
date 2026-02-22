@@ -4,7 +4,7 @@ Bias case study for CRC screening recommendations with age-income intersectional
 
 ## Current Setup
 
-- Target population for generation: `15,000` (default in script 1)
+- Target population for generation: `16,000` (default in script 1)
 - Cohort used for analysis/modeling: ages `50-80`
 - Age subgroup bins: `50-54`, `55-59`, `60-64`, `65-69`, `70-74`, `75-80`
 - Label window: colonoscopy in the last 5 years (`SNOMED 73761001`)
@@ -40,7 +40,7 @@ Lower income and younger patients are more likely to be masked.
 
 ```bash
 cd crc
-uv run python scripts/1_generate_data.py -p 12000 -s 160
+uv run python scripts/1_generate_data.py -p 16000 -s 160
 uv run python scripts/2_gen_bias.py -s 160
 uv run python scripts/3_train_models.py
 uv run python scripts/4_create_report.py
