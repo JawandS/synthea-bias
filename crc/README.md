@@ -1,90 +1,47 @@
-# Colorectal Screening Case Study: Intersectional Bias (Age x Income)
+# Colorectal Screening Case Study (CRC)
 
-Goal: build a GBDT that recommends CRC screening from demographics + clinical features, while simulating bias from missing income.
+Bias case study for CRC screening recommendations with age-income intersectional label masking.
 
-## Scope
+## Current Setup
 
-- Use Synthea CRC behavior where possible.
-- Restrict cohort to ages `50-80`.
-- Define labels:
-  - `true_screened_in_last_5y`
-  - `observed_screened_in_last_5y` (after masking)
-- Train:
-  - Baseline model on `true_screened_in_last_5y`
-  - Biased model on `observed_screened_in_last_5y`
-- Evaluate both against `true_screened_in_last_5y`.
+- Target population for generation: `15,000` (default in script 1)
+- Cohort used for analysis/modeling: ages `50-80`
+- Age subgroup bins: `50-54`, `55-59`, `60-64`, `65-69`, `70-74`, `75-80`
+- Label window: colonoscopy in the last 5 years (`SNOMED 73761001`)
+- Models:
+  - Baseline trained on `true_screened_in_last_5y`
+  - Biased trained on `observed_screened_in_last_5y`
+  - Both evaluated against `true_screened_in_last_5y`
 
-## Exact Bias Mechanism
+## Overall Story
+This case study is trying to model which individuals are screened for colorectal cancer (CRC) in the last 5 years. The bias mechanism is that younger and lower-income patients are more likely to have their screening status masked, which simulates a scenario where certain populations are underrepresented in the observed data. Since some insurance companies may not have access to income of individuals this analysis shows how not controlling for key variables can perpetuate bias in model predictions and lead to worse outcomes for certain subgroups.
 
-Mask only patients with `true_screened_in_last_5y = 1`.
+## Data Flow
+
+- Source data comes from `synthea/output_crc/csv`.
+- `scripts/1_generate_data.py` runs Synthea and writes `output/info/1_summary_stats.md`.
+- `scripts/2_gen_bias.py` reads directly from `synthea/output_crc/csv` and writes:
+  - `output/data/data.csv`
+  - `output/info/2_bias_effect.md`
+- `scripts/3_train_models.py` writes `output/info/3_model.md`.
+- `scripts/4_create_report.py` writes `output/report.md`.
+
+## Bias Mechanism
+
+Masking is applied only when `true_screened_in_last_5y = 1`:
 
 `p_mask = clip(0.60 - 0.004 * (age - 50) - 0.000005 * (income_usd - 20000), 0.05, 0.70)`
 
-Then:
-- sample `u ~ Uniform(0, 1)`
-- `mask_screening = 1 if u < p_mask else 0`
-- `observed_screened_in_last_5y = true_screened_in_last_5y * (1 - mask_screening)`
+`observed_screened_in_last_5y = true_screened_in_last_5y * (1 - mask_screening)`
 
-Effect: older and higher-income patients are less likely to be masked, creating an age-income intersectional bias.
+Lower income and younger patients are more likely to be masked.
 
-## Required Columns
+## Run
 
-Training features (income excluded):
-- `age`
-- `male`
-- `smoker`
-- `bmi`
-- `obesity` (`SNOMED 162864005`)
-- `type2_diabetes` (`SNOMED 44054006`)
-- `hypertension` (`SNOMED 59621000`)
-- `hyperlipidemia` (`SNOMED 55822004`)
-- `ibd` (`Crohn 34000006` or `Ulcerative colitis 64766004`; use `0` if absent)
-- `ambulatory_visits_last2y`
-- `preventive_visit_last2y`
-- `comorbidity_count`
-
-Analysis-only columns:
-- `income_usd`
-- `income_band`
-- `age_band`
-- `true_screened_in_last_5y`
-- `observed_screened_in_last_5y`
-- `mask_screening`
-
-## Label and Leakage Rules
-
-- Primary target window: screening in last 5 years.
-- Start with colonoscopy code `SNOMED 73761001`.
-- Do not train on:
-  - any direct screening indicator in the target window
-  - target-derived columns
-  - post-index outcomes/treatments
-- Do not include `income_usd` in model features.
-
-## 4-Script Plan
-
-1. `scripts/1_generate_data.py`
-- Generate Synthea output under `synthea/output_crc/csv` and write summary stats.
-- Filter to age `50-80`.
-- Write `output/info/1_summary_stats.md`.
-
-2. `scripts/2_gen_bias.py`
-- Build `output/data/data.csv` directly from `synthea/output_crc/csv`.
-- Create true/observed screening labels and `mask_screening` using formula above.
-- Write `output/info/2_bias_effect.md` with age, income, and age x income prevalence tables.
-
-3. `scripts/3_train_models.py`
-- Train baseline vs biased GBDT with identical splits.
-- Tune threshold on validation (`f1`).
-- Report AUC, recall, F1 overall and by:
-  - age bands: `50-54`, `55-59`, `60-64`, `65-69`, `70-74`, `75-80`
-  - income bands
-  - age x income intersections
-- Write `output/info/3_model.md`.
-
-4. `scripts/4_create_report.py`
-- Build `output/report.md` summarizing data, bias mechanism, model deltas, and subgroup disparities.
-
-## Expected Result
-
-Because income is omitted from training but drives masking, the biased model should over-recommend screening for groups with better observed capture (especially older/higher-income) and under-recommend for younger/lower-income groups.
+```bash
+cd crc
+uv run python scripts/1_generate_data.py -p 12000 -s 160
+uv run python scripts/2_gen_bias.py -s 160
+uv run python scripts/3_train_models.py
+uv run python scripts/4_create_report.py
+```
